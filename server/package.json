@@ -1,0 +1,27 @@
+{
+  "dependencies": {
+    "express": "^4.21.2",
+    "multer": "^2.0.2",
+    "situ": "file:..",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3"
+  },
+  "name": "situ-server",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --watch dist/src/index.js",
+    "start": "node dist/src/index.js",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "rm -rf dist"
+  },
+  "type": "module",
+  "version": "0.2.0"
+}

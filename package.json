@@ -1,0 +1,54 @@
+{
+  "dependencies": {
+    "@langchain/core": "^1.3.0",
+    "@langchain/google-genai": "^2.3.0",
+    "@langchain/ollama": "^1.3.0",
+    "@langchain/openai": "^1.8.0",
+    "pg": "^8.13.0",
+    "zod": "^4.0.0"
+  },
+  "description": "Learn anything through simulated situations. Format-defined modules, any AI, any voice, rubric evaluation, progress tracking.",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    },
+    "./migrations/schema.sql": "./migrations/schema.sql",
+    "./situations/schema.json": "./situations/schema.json"
+  },
+  "files": [
+    "dist",
+    "!dist/test",
+    "!dist/examples",
+    "situations",
+    "migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "language-learning",
+    "roleplay",
+    "simulation",
+    "langchain",
+    "tts"
+  ],
+  "license": "MIT",
+  "main": "dist/src/index.js",
+  "name": "situ",
+  "scripts": {
+    "build": "tsc && cp -r situations dist/situations && cp -r migrations dist/migrations",
+    "example": "npm run build && node dist/examples/node-usage.js",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "rm -rf dist"
+  },
+  "type": "module",
+  "types": "dist/src/index.d.ts",
+  "version": "0.2.0"
+}
