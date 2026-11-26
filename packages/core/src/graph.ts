@@ -72,7 +72,7 @@ export function buildConversationGraph(opts: {
     const user = start || s.input == null ? null : learnerMessage(s.input);
     const history: BaseMessage[] = [system, ...s.messages, user ?? new HumanMessage("(The scene starts now. Say your first line to the learner, in character.)")];
     let text = "";
-    for (let i = 0; i < 2 && !text; i++) text = messageText(await llm.invoke(history)).trim();
+    for (let i = 0; i < 2 && !text; i++) text = messageText(await llm.invoke(history)).trim(); // empty replies happen; retry once
     if (!text) throw new Error("The language model returned an empty reply. Try again.");
     return { messages: user ? [user, new AIMessage(text)] : [new AIMessage(text)], turns: start ? s.turns : s.turns + 1, input: null };
   };

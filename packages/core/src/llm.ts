@@ -29,7 +29,7 @@ registerLLMProvider({
       apiKey: opt(o, "apiKey"),
       model: opt(o, "model") ?? DEFAULT_MODELS.gemini,
       temperature: o.temperature ?? 0.8,
-      maxRetries: 2,
+      maxRetries: 2, // fail fast enough for a live chat; the UI lets the learner resend
     }) as unknown as BaseChatModel;
   },
 });
@@ -50,7 +50,7 @@ registerLLMProvider({
       apiKey: opt(o, "apiKey") ?? "not-needed",
       model: opt(o, "model") ?? DEFAULT_MODELS.openai,
       temperature: o.temperature ?? 0.8,
-      maxRetries: 2,
+      maxRetries: 2, // fail fast enough for a live chat; the UI lets the learner resend
       configuration: baseURL ? { baseURL, dangerouslyAllowBrowser: true } : { dangerouslyAllowBrowser: true },
     }) as unknown as BaseChatModel;
   },
@@ -69,7 +69,7 @@ registerLLMProvider({
       model: opt(o, "model") ?? DEFAULT_MODELS.ollama,
       baseUrl: opt(o, "baseUrl") ?? "http://localhost:11434",
       temperature: o.temperature ?? 0.8,
-      maxRetries: 2,
+      maxRetries: 2, // fail fast enough for a live chat; the UI lets the learner resend
     }) as unknown as BaseChatModel;
   },
 });
