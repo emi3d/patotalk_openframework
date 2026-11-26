@@ -2,7 +2,7 @@
  * Self-test: runs a full conversation with a real LLM. Character B is the experience persona;
  * the learner (character A) is simulated by a second LLM call. Stats go to SQLite.
  *
- *   GEMINI_API_KEY=... npx tsx scripts/selftest.ts [experience-id] [--turns 4]
+ *   npm run selftest -- [experience-id] [--turns 4]   (reads GEMINI_API_KEY from .env)
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";

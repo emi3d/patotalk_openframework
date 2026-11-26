@@ -5,7 +5,7 @@
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
     "test": "npm -w @patotalk/core test",
-    "selftest": "tsx scripts/selftest.ts",
+    "selftest": "tsx --env-file=.env scripts/selftest.ts",
     "web": "npm -w @patotalk/web run dev",
     "build:web": "npm -w @patotalk/web run build",
     "typecheck": "tsc -p packages/core && tsc -p packages/tts-web && tsc -p apps/web --noEmit"
