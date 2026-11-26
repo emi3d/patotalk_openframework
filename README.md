@@ -15,7 +15,7 @@ npm install
 npm run web
 ```
 
-Open http://localhost:5173, go to **Settings**, and paste a Gemini API key. You can get a free one at aistudio.google.com/apikey. In a scene, press **Speak**, talk, and press it again to send. Typing works too.
+Open http://localhost:5173, go to **Settings**, and paste a Gemini API key. You can get a free one at aistudio.google.com/apikey. In a scene, just talk: the mic stays on (hands-free), and Pato the duck answers with its beak moving. Talk over it to interrupt; the model is told what you had heard before cutting in. Turn hands-free off to use push-to-talk instead, or type.
 
 To have two AIs play a whole scene against each other in the terminal, first copy `.env.example` to `.env` and put your key in it. Then run:
 
@@ -28,7 +28,7 @@ npm run selftest -- --voice               # the simulated learner speaks; the mo
 ## How it fits together
 
 - **LLM**: must accept audio input. Gemini does out of the box; OpenAI-compatible audio models (like gpt-4o-mini-audio-preview) and any LangChain chat model that takes audio work too. A text-only model still runs if the learner types.
-- **Your voice in**: the app records a 16 kHz WAV and sends it as a LangChain audio block. No speech recognition anywhere.
+- **Your voice in**: the app records a 16 kHz WAV and sends it as a LangChain audio block. No speech recognition anywhere. In hands-free mode a tiny voice detector ([TEN VAD](https://github.com/TEN-framework/ten-vad), about 280 KB of WASM using under 1% of a CPU core) decides when you start and stop. It is loaded at runtime from TEN's repository and its license has extra conditions from Agora, so check it before shipping a product. Swap it for any `VoiceDetector`; a loudness detector is the built-in fallback.
 - **Loop**: a small LangGraph graph. Each message is one turn, and the scene is evaluated when you end it or run out of turns.
 - **Voice out**: Supertonic 3 by default, running in the browser. Kokoro, the browser's own voices, Gemini TTS, or any `/v1/audio/speech` server also work.
 - **Evaluation**: the evaluator hears your recordings too, so it can comment on pronunciation and fluency.
