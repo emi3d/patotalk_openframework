@@ -6,13 +6,9 @@ import { StatsStore, type AttemptStats, type SqlDriver, type UserSummary } from 
 import type { SpeechAudio, TTSProvider } from "./tts.js";
 
 export interface PatoTalkOptions {
-  /** Language provider: a config, or any LangChain chat model. */
   llm: LLMConfig | BaseChatModel;
-  /** Optional separate model for evaluation. */
   evaluator?: LLMConfig | BaseChatModel;
-  /** Voice provider. Omit for text only. */
   tts?: TTSProvider;
-  /** SQL stats. Omit to keep no stats. */
   stats?: SqlDriver | StatsStore;
 }
 
@@ -35,15 +31,12 @@ export interface Session {
   speakingSeconds: number;
   finished: boolean;
   evaluation?: EvaluationResult;
-  /** @internal true while a turn is running */
   busy?: boolean;
-  /** @internal */
   graph: ReturnType<typeof buildConversationGraph>;
 }
 
 const isModel = (x: unknown): x is BaseChatModel => !!x && typeof (x as BaseChatModel).invoke === "function";
 const uid = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-/** Words, counting each CJK character as one (Japanese/Chinese have no spaces). */
 export const countWords = (t: string) =>
   (t.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu)?.length ?? 0) +
   (t.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu, " ").match(/[\p{L}\p{N}']+/gu)?.length ?? 0);
@@ -61,7 +54,6 @@ export class PatoTalk {
     if (opts.stats) this.stats = opts.stats instanceof StatsStore ? opts.stats : new StatsStore(opts.stats);
   }
 
-  /** Start an experience. Returns the session and character B's opening line. */
   async start(input: Experience | ExperienceInput | string, opts: { userId: string; speak?: boolean }): Promise<{ session: Session; opening: Turn }> {
     const experience = parseExperience(input);
     const graph = buildConversationGraph({ experience, llm: await this.llm, evaluator: await this.evaluator });
@@ -71,11 +63,6 @@ export class PatoTalk {
     return { session, opening: await this.turn(session, state, opts.speak) };
   }
 
-  /**
-   * One learner turn. Pass recorded audio ({ audio: base64, mimeType, seconds }) and the
-   * multimodal model listens to it directly, no transcription. Text works too (typing fallback).
-   * Returns character B's reply (and its TTS audio). Ends + evaluates at maxTurns.
-   */
   async say(session: Session, input: UserInput, opts: { speak?: boolean } = {}): Promise<Turn> {
     if (session.finished) throw new Error("Session already finished");
     const audio = isAudio(input);
@@ -84,7 +71,6 @@ export class PatoTalk {
     session.busy = true;
     try {
       const state = await session.graph.invoke({ action: "talk", input: audio ? input : input.trim() }, this.cfg(session));
-      // only counted once the turn succeeded
       if (audio) session.speakingSeconds += input.seconds ?? 0;
       else session.userWords += countWords(input);
       return await this.turn(session, state, opts.speak);
@@ -93,7 +79,6 @@ export class PatoTalk {
     }
   }
 
-  /** End the scene now and evaluate it. */
   async end(session: Session): Promise<EvaluationResult> {
     if (session.evaluation) return session.evaluation;
     if (session.busy) throw new Error("Still answering the previous message");
@@ -102,7 +87,6 @@ export class PatoTalk {
     return state.evaluation!;
   }
 
-  /** Full message history of a session (kept in memory only). */
   async history(session: Session) {
     const snap = await session.graph.getState(this.cfg(session));
     return (snap.values.messages ?? []).map((m: any) => {

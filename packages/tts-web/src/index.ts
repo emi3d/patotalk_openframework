@@ -7,7 +7,6 @@ export { cleanForSpeech, serial } from "./util.js";
 export { VoiceRecorder, type RecordedVoice } from "./recorder.js";
 export { HandsFreeMic, EnergyDetector, TenVadDetector, TEN_VAD_URL, type VoiceDetector, type HandsFreeOptions } from "./handsfree.js";
 
-/** The browser's built-in voices (Web Speech API). Speaks directly; returns no samples. */
 export class WebSpeechTTS implements TTSProvider {
   readonly id = "web-speech";
   async synthesize(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
@@ -17,7 +16,7 @@ export class WebSpeechTTS implements TTSProvider {
       u.rate = opts.speed ?? 1;
       const v = speechSynthesis.getVoices().find((x) => x.lang.toLowerCase().startsWith(opts.lang.toLowerCase()));
       if (v) u.voice = v;
-      const done = setTimeout(resolve, 5000 + text.length * 200); // some browsers never fire onend
+      const done = setTimeout(resolve, 5000 + text.length * 200);
       u.onend = () => (clearTimeout(done), resolve());
       u.onerror = (e) => (clearTimeout(done), e.error === "interrupted" || e.error === "canceled" ? resolve() : reject(new Error(e.error)));
       speechSynthesis.speak(u);
@@ -26,10 +25,6 @@ export class WebSpeechTTS implements TTSProvider {
   }
 }
 
-/**
- * Plays one clip at a time: starting a new clip stops the previous one.
- * level() gives the output loudness (0..1) for lip-sync, progress() how much of the clip was heard (for interruptions).
- */
 export class AudioPlayer {
   private ctx?: AudioContext;
   private current?: AudioBufferSourceNode;
@@ -40,7 +35,7 @@ export class AudioPlayer {
   private closed = false;
   async play(a: SpeechAudio): Promise<void> {
     this.stop();
-    if (this.closed || (!a.data && !a.samples?.length)) return; // a late clip after close() must stay silent
+    if (this.closed || (!a.data && !a.samples?.length)) return;
     this.ctx ??= new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {});
     if (!this.analyser) {
@@ -69,11 +64,9 @@ export class AudioPlayer {
       src.start();
     });
   }
-  /** True while a clip is playing. */
   get playing() {
     return !!this.current;
   }
-  /** Current output loudness, roughly 0..1. */
   level(): number {
     if (!this.current || !this.analyser) return 0;
     this.analyser.getFloatTimeDomainData(this.buf);
@@ -81,7 +74,6 @@ export class AudioPlayer {
     for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
     return Math.min(1, Math.sqrt(sum / this.buf.length) * 4);
   }
-  /** Fraction (0..1) of the current clip played so far. */
   progress(): number {
     if (!this.current || !this.ctx || !this.duration) return 0;
     return Math.min(1, (this.ctx.currentTime - this.startedAt) / this.duration);
@@ -102,7 +94,6 @@ export class AudioPlayer {
   }
 }
 
-/** Play a SpeechAudio in the browser. Resolves when playback ends. */
 export async function playAudio(a: SpeechAudio, ctx = new AudioContext()): Promise<void> {
   if (a.data) {
     const buf = await ctx.decodeAudioData(a.data.slice().buffer);

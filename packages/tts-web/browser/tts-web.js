@@ -177,7 +177,6 @@ var KokoroWebTTS = class {
       );
       return KokoroTTS.from_pretrained(this.opts.modelId ?? "onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: this.opts.dtype ?? "fp32",
-        // WASM by default: in our tests WebGPU produced clipped/garbled audio for Japanese and French.
         device: this.opts.device ?? "wasm",
         progress_callback: this.opts.onProgress
       });
@@ -185,7 +184,6 @@ var KokoroWebTTS = class {
     this.tts.catch(() => this.tts = void 0);
     return this.tts;
   }
-  /** The phoneme string Kokoro is given (exposed for debugging and tests). */
   async phonemes(text, lang) {
     const l = lang.toLowerCase();
     if (l === "en" || l.startsWith("en-")) return null;
@@ -223,7 +221,6 @@ var KokoroWebTTS = class {
     }
     return { samples: audio.audio, sampleRate: audio.sampling_rate };
   }
-  /** eSpeak NG IPA per clause, keeping the punctuation Kokoro uses for pauses. */
   async espeakIpa(text, lang) {
     this.espeak ??= (async () => {
       const mod = await import(
@@ -316,7 +313,6 @@ var SupertonicWebTTS = class {
     this.engine.catch(() => this.engine = void 0);
     return this.engine;
   }
-  /** One synthesis at a time; on an engine error the engine is rebuilt and the text tried once more. */
   synthesize(text, opts) {
     return this.queue(async () => {
       try {
@@ -403,7 +399,6 @@ var VoiceRecorder = class {
     const max = this.opts.maxSeconds ?? 60;
     this.timer = setTimeout(() => this.opts.onAutoStop?.(), max * 1e3);
   }
-  /** Stop and return the recording, or null if it was too short to contain speech. */
   async stop(minSeconds = 0.4) {
     const rec = this.rec;
     if (!rec || rec.state === "inactive") return null;
@@ -419,7 +414,6 @@ var VoiceRecorder = class {
     const wav = encodeWav(samples, TARGET_RATE);
     return { audio: toBase64(wav), mimeType: "audio/wav", seconds: Math.round(seconds * 10) / 10, url: URL.createObjectURL(new Blob([wav], { type: "audio/wav" })) };
   }
-  /** Drop the current recording. */
   cancel() {
     this.done = void 0;
     if (this.rec && this.rec.state !== "inactive") {
@@ -523,19 +517,15 @@ var HandsFreeMic = class {
   ctx;
   stream;
   node;
-  // resampler state
   pos = 0;
   last = 0;
   pending = [];
-  // VAD state
   voiced = 0;
   silent = 0;
   speaking = false;
   pre = [];
   utter = [];
-  /** While paused (e.g. the model is answering) nothing is recorded. */
   paused = false;
-  /** Last speech probability, for a UI meter. */
   probability = 0;
   static get supported() {
     return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof AudioWorkletNode !== "undefined";
@@ -543,7 +533,6 @@ var HandsFreeMic = class {
   get listening() {
     return !!this.node;
   }
-  /** True while the learner is mid-utterance. */
   get hearing() {
     return this.speaking;
   }
@@ -586,7 +575,6 @@ var HandsFreeMic = class {
     this.utter = [];
     this.pre = [];
   }
-  /** Linear resample to 16 kHz, then cut into 256-sample frames. */
   feed(chunk) {
     const step = this.ctx.sampleRate / RATE;
     let pos = this.pos;
@@ -709,11 +697,9 @@ var AudioPlayer = class {
       src.start();
     });
   }
-  /** True while a clip is playing. */
   get playing() {
     return !!this.current;
   }
-  /** Current output loudness, roughly 0..1. */
   level() {
     if (!this.current || !this.analyser) return 0;
     this.analyser.getFloatTimeDomainData(this.buf);
@@ -721,7 +707,6 @@ var AudioPlayer = class {
     for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
     return Math.min(1, Math.sqrt(sum / this.buf.length) * 4);
   }
-  /** Fraction (0..1) of the current clip played so far. */
   progress() {
     if (!this.current || !this.ctx || !this.duration) return 0;
     return Math.min(1, (this.ctx.currentTime - this.startedAt) / this.duration);

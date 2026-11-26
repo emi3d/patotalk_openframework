@@ -1,23 +1,16 @@
 import { encodeWav } from "@patotalk/core";
 import { toBase64, type RecordedVoice } from "./recorder.js";
 
-/**
- * Hands-free mic: always listening, a tiny voice-activity detector (VAD) decides when the learner
- * starts and stops talking. No speech recognition: each utterance is handed over as WAV audio
- * for the multimodal LLM. Starting to talk while the character speaks counts as an interruption.
- */
 
 const RATE = 16000;
-const HOP = 256; // 16 ms at 16 kHz (TEN VAD's optimized hop)
+const HOP = 256;
 
-/** Speech probability (0..1) for one 256-sample, 16 kHz frame. Swap in any VAD (TEN, Silero, native on mobile...). */
 export interface VoiceDetector {
   readonly id: string;
   process(frame: Int16Array): number;
   destroy?(): void;
 }
 
-/** Zero-dependency fallback: loudness above an adaptive noise floor. Works anywhere, but coughs and music count as speech. */
 export class EnergyDetector implements VoiceDetector {
   readonly id = "energy";
   private floor = 0.004;
@@ -25,17 +18,11 @@ export class EnergyDetector implements VoiceDetector {
     let sum = 0;
     for (let i = 0; i < frame.length; i++) sum += (frame[i] / 32768) ** 2;
     const rms = Math.sqrt(sum / frame.length);
-    // the floor follows quiet passages quickly and loud ones slowly
     this.floor = rms < this.floor ? this.floor * 0.9 + rms * 0.1 : this.floor * 0.999 + rms * 0.001;
     return Math.max(0, Math.min(1, (rms / Math.max(this.floor, 0.002) - 2) / 4));
   }
 }
 
-/**
- * TEN VAD (about 280 KB of WASM, roughly 1% of one CPU core). Loaded at runtime from TEN's own repository,
- * so it is not bundled with this MIT code. Its license is Apache 2.0 with extra conditions from Agora:
- * read it before shipping it in a product (https://github.com/TEN-framework/ten-vad/blob/main/LICENSE).
- */
 export const TEN_VAD_URL = "https://cdn.jsdelivr.net/gh/TEN-framework/ten-vad@b425116336f400f1181a46ba2d58b913cc19d3e5/lib/Web/ten_vad.js";
 
 export class TenVadDetector implements VoiceDetector {
@@ -72,21 +59,13 @@ export class TenVadDetector implements VoiceDetector {
 
 export interface HandsFreeOptions {
   detector: VoiceDetector;
-  /** The learner started talking (stop the character's voice here). */
   onSpeechStart?: () => void;
-  /** The learner finished an utterance. */
   onUtterance: (v: RecordedVoice) => void;
-  /** Speech started but was too short to send (a cough, a click). */
   onDiscard?: () => void;
-  /** Return true while the character is talking: starting then needs a clearer, longer voice, so its own echo doesn't trigger. */
   isCharacterSpeaking?: () => boolean;
-  /** Speech probability needed to count as voice. Default 0.5 (0.7 while the character speaks). */
   threshold?: number;
-  /** Silence that ends an utterance. Default 800 ms. */
   endSilenceMs?: number;
-  /** Shorter utterances are dropped. Default 350 ms. */
   minSpeechMs?: number;
-  /** Utterances are cut and sent at this length. Default 30 s. */
   maxSeconds?: number;
 }
 
@@ -98,19 +77,15 @@ export class HandsFreeMic {
   private ctx?: AudioContext;
   private stream?: MediaStream;
   private node?: AudioWorkletNode;
-  // resampler state
   private pos = 0;
   private last = 0;
   private pending: number[] = [];
-  // VAD state
   private voiced = 0;
   private silent = 0;
   private speaking = false;
   private pre: Int16Array[] = [];
   private utter: Int16Array[] = [];
-  /** While paused (e.g. the model is answering) nothing is recorded. */
   paused = false;
-  /** Last speech probability, for a UI meter. */
   probability = 0;
 
   constructor(private o: HandsFreeOptions) {}
@@ -122,7 +97,6 @@ export class HandsFreeMic {
   get listening() {
     return !!this.node;
   }
-  /** True while the learner is mid-utterance. */
   get hearing() {
     return this.speaking;
   }
@@ -138,7 +112,7 @@ export class HandsFreeMic {
       const src = this.ctx.createMediaStreamSource(this.stream);
       const node = new AudioWorkletNode(this.ctx, "pt-capture");
       node.port.onmessage = (e) => this.feed(e.data as Float32Array);
-      src.connect(node); // not connected to the speakers
+      src.connect(node);
       this.node = node;
     } catch (e) {
       this.stop();
@@ -169,7 +143,6 @@ export class HandsFreeMic {
     this.pre = [];
   }
 
-  /** Linear resample to 16 kHz, then cut into 256-sample frames. */
   private feed(chunk: Float32Array) {
     const step = this.ctx!.sampleRate / RATE;
     let pos = this.pos;
@@ -201,7 +174,7 @@ export class HandsFreeMic {
 
     if (!this.speaking) {
       this.pre.push(f);
-      if (this.pre.length > 20) this.pre.shift(); // keep ~320 ms before the start
+      if (this.pre.length > 20) this.pre.shift();
       this.voiced = isVoice ? this.voiced + 1 : 0;
       if (ms(this.voiced) >= (echoGuard ? 190 : 80)) {
         this.speaking = true;
@@ -217,7 +190,7 @@ export class HandsFreeMic {
     this.silent = isVoice ? 0 : this.silent + 1;
     const total = ms(this.utter.length);
     if (ms(this.silent) >= (o.endSilenceMs ?? 800) || total >= (o.maxSeconds ?? 30) * 1000) {
-      const frames = this.utter.slice(0, this.utter.length - Math.max(0, this.silent - 12)); // keep ~200 ms of tail
+      const frames = this.utter.slice(0, this.utter.length - Math.max(0, this.silent - 12));
       const speechMs = total - ms(this.silent);
       this.reset();
       if (speechMs < (o.minSpeechMs ?? 350)) return o.onDiscard?.();

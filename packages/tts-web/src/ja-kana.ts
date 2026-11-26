@@ -1,14 +1,5 @@
-/**
- * Japanese kana (pronunciation reading) -> Kokoro-82M phoneme string.
- * Kokoro's Japanese voices were trained on misaki's mora IPA: ʨ ʥ ʦ for ch/j/ts, β for w,
- * ʲ before i, ɨ after s/ts/sh/j, ɴ for ん, ʔ for っ, ː for ー.
- * Kanji need a reading first (dictionary or an LLM): pass a pronunciation reading in kana,
- * with particles written as spoken (は→わ, へ→え, を→お).
- */
-
 const V: Record<string, string> = { a: "a", i: "i", u: "ɯ", e: "e", o: "o" };
 
-// base consonant per row (hiragana -> [onset, vowel])
 const ROWS: [string, string][] = [
   ["あいうえお", ""],
   ["かきくけこ", "k"],
@@ -26,16 +17,13 @@ const ROWS: [string, string][] = [
 ];
 const VOWEL_ORDER = ["a", "i", "u", "e", "o"];
 
-/** Mora (one or two kana) -> [onset, vowel] in Kokoro symbols. */
 const MORA = new Map<string, [string, string]>();
 for (const [kana, c] of ROWS) [...kana].forEach((k, i) => MORA.set(k, [c, VOWEL_ORDER[i]]));
-// irregular single kana
 Object.entries({
   し: ["ɕ", "i"], ち: ["ʨ", "i"], つ: ["ʦ", "u"], ふ: ["ɸ", "u"], ひ: ["ç", "i"], じ: ["ʥ", "i"], ぢ: ["ʥ", "i"],
   づ: ["z", "u"], に: ["ɲ", "i"], や: ["j", "a"], ゆ: ["j", "u"], よ: ["j", "o"], わ: ["β", "a"], を: ["", "o"],
   ゔ: ["v", "u"],
 } as Record<string, [string, string]>).forEach(([k, v]) => MORA.set(k, v));
-// yōon: i-column kana + small ya/yu/yo (and small vowels for loanwords)
 const PAL: Record<string, string> = { き: "kʲ", ぎ: "ɡʲ", し: "ɕ", じ: "ʥ", ち: "ʨ", ぢ: "ʥ", に: "ɲ", ひ: "ç", び: "bʲ", ぴ: "pʲ", み: "mʲ", り: "ɾʲ" };
 for (const [k, c] of Object.entries(PAL)) {
   MORA.set(k + "ゃ", [c, "a"]);
@@ -48,17 +36,14 @@ Object.entries({
   ふぉ: ["ɸ", "o"], うぃ: ["β", "i"], うぇ: ["β", "e"], うぉ: ["β", "o"], つぁ: ["ʦ", "a"], つぇ: ["ʦ", "e"], ゔぁ: ["v", "a"],
   ゔぃ: ["v", "i"], ゔぇ: ["v", "e"], ゔぉ: ["v", "o"], いぇ: ["j", "e"], しぇ: ["ɕ", "e"], じぇ: ["ʥ", "e"], ちぇ: ["ʨ", "e"],
 } as Record<string, [string, string]>).forEach(([k, v]) => MORA.set(k, v));
-// lone small vowels
 Object.entries({ ぁ: ["", "a"], ぃ: ["", "i"], ぅ: ["", "u"], ぇ: ["", "e"], ぉ: ["", "o"], ゃ: ["j", "a"], ゅ: ["j", "u"], ょ: ["j", "o"] } as Record<string, [string, string]>).forEach(([k, v]) =>
   MORA.set(k, v),
 );
 
 const PUNCT: Record<string, string> = { "。": ".", "、": ",", "！": "!", "？": "?", "!": "!", "?": "?", ".": ".", ",": ",", "…": "…", "「": "“", "」": "”", "　": " ", " ": " " };
 
-/** Katakana -> hiragana (keeps ー). */
 export const toHiragana = (s: string) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
 
-/** Apply Kokoro's symbol rules to one mora (as yomiscript's jaKokoro does). */
 function kokoroMora(on: string, vowel: string): string {
   let v = V[vowel];
   if (v === "i" && /^[kɡbpmɾvɸtdʦ]$/.test(on)) on += "ʲ";
@@ -101,13 +86,12 @@ export function kanaToKokoro(text: string): string {
     const m2 = MORA.get(two);
     const m = m2 ?? MORA.get(c);
     if (!m) {
-      i++; // unknown character (kanji without reading, latin...): skipped
+      i++;
       continue;
     }
     const [on, vowel] = m;
     if (geminate) out += on ? on[0] === "ʨ" ? "t" : on[0] === "ʦ" ? "t" : on[0] : "ʔ";
     geminate = false;
-    // long vowels written with kana: おう/おお -> oː, えい -> eː, ああ -> aː, いい -> iː, うう -> ɯː
     if (!on && lastVowel && (vowel === lastVowel || (vowel === "u" && lastVowel === "o") || (vowel === "i" && lastVowel === "e"))) {
       out += "ː";
       lastVowel = "";
@@ -121,5 +105,4 @@ export function kanaToKokoro(text: string): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-/** True when the text has kanji (needs a reading before kanaToKokoro). */
 export const hasKanji = (s: string) => /\p{Script=Han}/u.test(s);

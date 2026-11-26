@@ -16,7 +16,6 @@ interface Row {
   err?: string;
 }
 
-/** Try the in-browser voice models side by side, with timings and downloadable WAVs. */
 export function VoiceLab() {
   const engines = useMemo<Record<string, TTSProvider>>(
     () => ({

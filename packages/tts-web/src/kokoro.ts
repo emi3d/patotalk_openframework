@@ -2,7 +2,6 @@ import type { SpeakOptions, SpeechAudio, TTSProvider } from "@patotalk/core";
 import { hasKanji, kanaToKokoro } from "./ja-kana.js";
 import { cleanForSpeech, serial } from "./util.js";
 
-/** Kokoro voices per language (Kokoro-82M v1.0). */
 export const KOKORO_VOICES: Record<string, { female: string; male: string }> = {
   en: { female: "af_heart", male: "am_michael" },
   "en-gb": { female: "bf_emma", male: "bm_george" },
@@ -19,9 +18,7 @@ export interface KokoroWebOptions {
   modelId?: string;
   dtype?: "fp32" | "fp16" | "q8" | "q4" | "q4f16";
   device?: "webgpu" | "wasm";
-  /** Japanese: kanji text -> pronunciation kana (dictionary or LLM). Without it, kanji are skipped. */
   reader?: (text: string) => Promise<string>;
-  /** Non-English text -> IPA (eSpeak NG). Default: loads eSpeak NG (GPL-3.0) from a CDN on first use. */
   ipa?: (text: string, lang: string) => Promise<string>;
   onProgress?: (p: unknown) => void;
 }
@@ -29,10 +26,6 @@ export interface KokoroWebOptions {
 const KOKORO_JS = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm";
 const ESPEAK = "https://cdn.jsdelivr.net/npm/@echogarden/espeak-ng-emscripten@0.3.5/";
 
-/**
- * Kokoro-82M in the browser (kokoro-js / transformers.js, WebGPU or WASM).
- * English uses kokoro-js's own G2P; Japanese uses kana -> Kokoro mora IPA; other languages use eSpeak NG IPA.
- */
 export class KokoroWebTTS implements TTSProvider {
   readonly id = "kokoro-web";
   readonly languages = Object.keys(KOKORO_VOICES);
@@ -46,7 +39,6 @@ export class KokoroWebTTS implements TTSProvider {
       const { KokoroTTS } = await import(/* @vite-ignore */ KOKORO_JS);
       return KokoroTTS.from_pretrained(this.opts.modelId ?? "onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: this.opts.dtype ?? "fp32",
-        // WASM by default: in our tests WebGPU produced clipped/garbled audio for Japanese and French.
         device: this.opts.device ?? "wasm",
         progress_callback: this.opts.onProgress,
       });
@@ -55,17 +47,16 @@ export class KokoroWebTTS implements TTSProvider {
     return this.tts;
   }
 
-  /** The phoneme string Kokoro is given (exposed for debugging and tests). */
   async phonemes(text: string, lang: string): Promise<string | null> {
     const l = lang.toLowerCase();
-    if (l === "en" || l.startsWith("en-")) return null; // kokoro-js handles English itself
+    if (l === "en" || l.startsWith("en-")) return null;
     if (l.startsWith("ja")) {
       let kana = text;
       if (hasKanji(text) && this.opts.reader) {
         try {
           kana = await this.opts.reader(text);
         } catch {
-          kana = text; // reading failed: kanji are skipped, kana still spoken
+          kana = text;
         }
       }
       return kanaToKokoro(kana);
@@ -96,7 +87,6 @@ export class KokoroWebTTS implements TTSProvider {
     return { samples: audio.audio as Float32Array, sampleRate: audio.sampling_rate as number };
   }
 
-  /** eSpeak NG IPA per clause, keeping the punctuation Kokoro uses for pauses. */
   private async espeakIpa(text: string, lang: string): Promise<string> {
     this.espeak ??= (async () => {
       const mod = await import(/* @vite-ignore */ ESPEAK + "espeak-ng.js");

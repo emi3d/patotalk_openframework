@@ -1,12 +1,3 @@
-/**
- * Self-test: runs a full conversation with a real LLM. Character B is the experience persona;
- * the learner (character A) is simulated by a second LLM call. Stats go to SQLite.
- *
- *   npm run selftest -- [experience-id] [--turns 4] [--voice]   (reads GEMINI_API_KEY from .env)
- *
- * --voice: the learner's lines are spoken with Gemini TTS and sent to the model as audio,
- * exactly like a recorded mic turn. The model hears them; nothing is transcribed.
- */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { GeminiTTS, PatoTalk, createLLM, encodeWav, messageText, parseExperience } from "../packages/core/src/index.js";

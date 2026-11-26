@@ -1,8 +1,3 @@
-/**
- * User stats in any SQL database. Only numbers are stored, never conversation text.
- * A driver is two functions; adapters exist for node:sqlite, sql.js (browser) and expo-sqlite.
- * Placeholders are `?` (SQLite style); a Postgres adapter can rewrite them to $1, $2...
- */
 export type Row = Record<string, unknown>;
 
 export interface SqlDriver {
@@ -28,7 +23,6 @@ export const STATS_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS pt_attempts_user ON pt_attempts(user_id, started_at)`,
 ];
 
-/** Columns added after v1. Each is tried once; "duplicate column" errors are ignored. */
 export const STATS_MIGRATIONS = [`ALTER TABLE pt_attempts ADD COLUMN speaking_seconds REAL NOT NULL DEFAULT 0`];
 
 export interface AttemptStats {
@@ -40,7 +34,6 @@ export interface AttemptStats {
   endedAt?: string;
   turns: number;
   userWords: number;
-  /** Seconds of learner voice sent to the model. */
   speakingSeconds?: number;
   score?: number;
   passed?: boolean;
@@ -146,7 +139,6 @@ export class StatsStore {
   }
 }
 
-/** Consecutive days (ending today or yesterday) with at least one attempt. */
 export function streak(isoDates: string[], today = new Date()): number {
   const days = new Set(isoDates.map((d) => d.slice(0, 10)));
   const day = (offset: number) => new Date(today.getTime() - offset * 86400000).toISOString().slice(0, 10);
@@ -157,7 +149,6 @@ export function streak(isoDates: string[], today = new Date()): number {
   return n;
 }
 
-/** In-memory driver for tests and demos (supports only what StatsStore uses). */
 export function memoryDriver(): SqlDriver {
   const rows = new Map<string, Row>();
   const cols = ["id", "user_id", "experience_id", "language", "started_at", "ended_at", "turns", "user_words", "score", "passed", "criteria_json", "speaking_seconds"];

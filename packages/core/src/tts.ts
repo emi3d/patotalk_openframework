@@ -1,7 +1,3 @@
-/**
- * Voice provider. Local or cloud, anything that turns text into audio.
- * Return raw PCM (`samples` + `sampleRate`) or an encoded file (`data` + `mimeType`).
- */
 export interface SpeechAudio {
   samples?: Float32Array;
   sampleRate?: number;
@@ -18,12 +14,10 @@ export interface SpeakOptions {
 
 export interface TTSProvider {
   readonly id: string;
-  /** Languages it can speak (BCP-47 primary tags). Empty = unknown / any. */
   readonly languages?: string[];
   synthesize(text: string, opts: SpeakOptions): Promise<SpeechAudio>;
 }
 
-/** Silent provider: lets the whole loop run with no voice at all. */
 export class SilentTTS implements TTSProvider {
   readonly id = "silent";
   async synthesize(): Promise<SpeechAudio> {
@@ -31,10 +25,6 @@ export class SilentTTS implements TTSProvider {
   }
 }
 
-/**
- * Any server exposing the OpenAI speech API (`POST /v1/audio/speech`):
- * OpenAI itself, Kokoro-FastAPI, Supertonic servers, LocalAI, etc.
- */
 export class OpenAISpeechTTS implements TTSProvider {
   readonly id = "openai-speech";
   constructor(private cfg: { baseUrl: string; apiKey?: string; model?: string; voice?: string; format?: "wav" | "mp3" }) {}
@@ -50,7 +40,6 @@ export class OpenAISpeechTTS implements TTSProvider {
   }
 }
 
-/** Gemini cloud TTS (returns 24 kHz 16-bit PCM). */
 export class GeminiTTS implements TTSProvider {
   readonly id = "gemini-tts";
   constructor(private cfg: { apiKey: string; model?: string; voice?: string }) {}
@@ -75,7 +64,6 @@ export class GeminiTTS implements TTSProvider {
   }
 }
 
-/** Encode mono float PCM as a 16-bit WAV file. */
 export function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array {
   const buf = new ArrayBuffer(44 + samples.length * 2);
   const v = new DataView(buf);
@@ -97,7 +85,6 @@ export function encodeWav(samples: Float32Array, sampleRate: number): Uint8Array
   return new Uint8Array(buf);
 }
 
-/** A playable file from any SpeechAudio. */
 export function toWavBytes(a: SpeechAudio): { data: Uint8Array; mimeType: string } {
   if (a.data) return { data: a.data, mimeType: a.mimeType ?? "audio/wav" };
   return { data: encodeWav(a.samples ?? new Float32Array(0), a.sampleRate ?? 24000), mimeType: "audio/wav" };

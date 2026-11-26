@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-/** Format tag every experience file carries, so any implementation can recognise it. */
 export const EXPERIENCE_FORMAT = "patotalk.experience/v1";
 
 export const VocabSchema = z.object({
@@ -9,13 +8,11 @@ export const VocabSchema = z.object({
   example: z.string().optional(),
 });
 
-/** Character A: the user. What they are told before the simulation starts. */
 export const CharacterASchema = z.object({
   role: z.string().default("You"),
   brief: z.string().describe("Instructions shown to the user: situation and goal."),
 });
 
-/** Character B: the persona the LLM plays on top of its base persona. */
 export const CharacterBSchema = z.object({
   name: z.string(),
   role: z.string(),
@@ -72,7 +69,6 @@ export type Experience = z.infer<typeof ExperienceSchema>;
 export type ExperienceInput = z.input<typeof ExperienceSchema>;
 export type Criterion = z.infer<typeof CriterionSchema>;
 
-/** Validate anything (object or JSON string) into an Experience. Throws a readable error. */
 export function parseExperience(input: unknown): Experience {
   const raw = typeof input === "string" ? parseText(input) : input;
   const r = ExperienceSchema.safeParse(raw);
@@ -83,7 +79,6 @@ export function parseExperience(input: unknown): Experience {
   return r.data;
 }
 
-/** Accepts JSON, or Markdown with one ```json fenced block (the format toMarkdown writes). */
 function parseText(text: string): unknown {
   const t = text.trim();
   if (t.startsWith("{")) return JSON.parse(t);
@@ -96,7 +91,6 @@ export function toJSON(exp: Experience): string {
   return JSON.stringify(exp, null, 2);
 }
 
-/** Human-readable Markdown that still round-trips through parseExperience. */
 export function toMarkdown(exp: Experience): string {
   const b = exp.characterB;
   const lines = [
@@ -130,7 +124,6 @@ export function toMarkdown(exp: Experience): string {
   return lines.join("\n");
 }
 
-/** Build the system prompt for character B. The hidden motivation stays here, never in the UI. */
 export function characterPrompt(exp: Experience): string {
   const b = exp.characterB;
   const parts = [

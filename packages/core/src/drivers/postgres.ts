@@ -1,11 +1,9 @@
 import type { SqlDriver } from "../stats.js";
 
-/** Minimal shape of a node-postgres Pool / Client (also Neon, Supabase pooler...). */
 export interface PgQueryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
 }
 
-/** Cloud SQL via Postgres. Rewrites `?` to `$n` and the SQLite upsert to Postgres syntax. */
 export function postgresDriver(pg: PgQueryable): SqlDriver {
   const tr = (sql: string) => {
     let i = 0;

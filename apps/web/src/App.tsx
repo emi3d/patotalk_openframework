@@ -138,15 +138,14 @@ function Library({ onPlay, onEdit }: { onPlay: (e: Experience) => void; onEdit: 
 interface Line {
   who: "user" | "char";
   text: string;
-  /** learner voice turn: playback URL + length */
   voice?: { url: string; seconds: number };
 }
 
 
 function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; onExit: () => void }) {
   const [lines, setLines] = useState<Line[]>([]);
-  const [thinking, setThinking] = useState("Starting…"); // blocks sending
-  const [voiceStatus, setVoiceStatus] = useState(""); // never blocks sending
+  const [thinking, setThinking] = useState("Starting…");
+  const [voiceStatus, setVoiceStatus] = useState("");
   const [input, setInput] = useState("");
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [err, setErr] = useState("");
@@ -157,7 +156,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   const fallback = useMemo(() => new WebSpeechTTS(), []);
   const speakId = useRef(0);
   const alive = useRef(true);
-  /** True while the character's line is being voiced: the mic waits for its turn (simple turn-taking, no interruptions). */
   const [talking, setTalking] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -165,7 +163,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   }, [lines, evaluation]);
   useEffect(
     () => () => {
-      // leaving the scene: silence everything, including replies or voices still on their way
       alive.current = false;
       speakId.current++;
       player.close();
@@ -173,14 +170,12 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     [player],
   );
 
-  /** Stop the character's voice, including a line still being prepared. */
   const silence = () => {
     speakId.current++;
     player.stop();
     setTalking(false);
   };
 
-  /** Speak a line. A newer line cancels an older one; voice errors fall back to browser voices and never block the chat. */
   const speak = async (text: string) => {
     const tts = ttsFor(settings);
     if (!tts || !text || !alive.current) return;
@@ -192,7 +187,7 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     setVoiceStatus("Preparing voice…");
     try {
       const a = await tts.synthesize(text, opts);
-      if (id !== speakId.current) return; // a newer line started meanwhile
+      if (id !== speakId.current) return;
       setVoiceStatus("");
       await player.play(a);
     } catch (x) {
@@ -217,7 +212,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
         setThinking("");
         return;
       }
-      // Start downloading the voice model while the character thinks of its first line.
       const tts = ttsFor(settings) as { load?: () => Promise<unknown> } | undefined;
       if (tts?.load) {
         setVoiceStatus("Loading voice model (first time downloads a few hundred MB)…");
@@ -245,7 +239,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     };
   }, []);
 
-  /** Send typed text or a recorded voice turn. Voice goes straight to the multimodal model: nothing is transcribed. */
   const send = async (what: string | RecordedVoice) => {
     const voice = typeof what === "string" ? undefined : what;
     const text = typeof what === "string" ? what.trim() : "";
@@ -264,7 +257,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
       setThinking("");
       if (settings.autoplay) speak(t.text);
     } catch (x) {
-      // The turn was not stored: take the bubble back. Typed text goes back in the box, a recording can be resent.
       setLines((l) => l.slice(0, -1));
       if (voice) setUnsent(voice);
       else setInput(text);
@@ -293,7 +285,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   sendRef.current = send;
   const [handsFree, setHandsFree] = useState(settings.handsFree && HandsFreeMic.supported);
   const hidden = usePageHidden();
-  // Turn-taking: the mic only listens on the learner's turn, and is fully off while the tab is hidden.
   const hf = useHandsFree(handsFree && !hidden && !evaluation, {
     paused: !ready || talking,
     onUtterance: (v) => {
@@ -441,7 +432,6 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   );
 }
 
-/** Error text a learner can act on. */
 function friendly(x: unknown, voice = false): string {
   const m = String((x as Error)?.message ?? x);
   if (voice && /audio|input_audio|modalit|mime|not supported|unsupported|INVALID_ARGUMENT|400/i.test(m))
@@ -499,7 +489,6 @@ function usePageHidden() {
   return hidden;
 }
 
-/** Always-on mic with a tiny VAD (TEN VAD, ~280 KB WASM; loudness fallback). Each utterance goes to the model as audio. */
 function useHandsFree(
   enabled: boolean,
   o: { paused: boolean; onUtterance: (v: RecordedVoice) => void; onError: (e: string) => void },
@@ -565,7 +554,6 @@ function useHandsFree(
   return { on, starting, hearing, detector };
 }
 
-/** Push-to-talk: press to record, press again to send the audio itself to the model. No speech recognition. */
 function useMic(onVoice: (v: RecordedVoice) => void, onError: (e: string) => void) {
   const [on, setOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);

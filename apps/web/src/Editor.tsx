@@ -4,7 +4,6 @@ import { parseExperience, toJSON, type Experience } from "@patotalk/core";
 const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
 const slug = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `exp-${Date.now()}`;
 
-/** Create or edit an experience with a form; the JSON tab shows the portable file. */
 export function Editor({ initial, onSave, onCancel }: { initial?: Experience; onSave: (e: Experience) => void; onCancel: () => void }) {
   const i = initial;
   const [f, setF] = useState({

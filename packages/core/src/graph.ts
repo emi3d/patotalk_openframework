@@ -6,26 +6,20 @@ import { z } from "zod";
 import { characterPrompt, type Experience } from "./experience.js";
 import { messageText } from "./llm.js";
 
-/** What the learner says in a turn: their recorded voice (preferred) or typed text. */
 export type UserInput = string | UserAudio;
 export interface UserAudio {
-  /** Base64 audio. WAV or MP3 work with every multimodal provider. */
   audio: string;
   mimeType: string;
-  /** Length in seconds, for stats. */
   seconds?: number;
-  /** Set when the learner talked over the character. `heard` is the part of its line that was played before it stopped. */
   interrupted?: { heard: string };
 }
 
-/** Text the model gets in front of an interrupting turn. */
 export const interruptionNote = (heard: string) =>
   heard.trim()
     ? `USER INTERRUPTED you. They only heard this much of your last line: "${heard.trim()}…". The rest was not heard.`
     : `USER INTERRUPTED you before hearing your last line.`;
 export const isAudio = (x: unknown): x is UserAudio => !!x && typeof x === "object" && "audio" in x;
 
-/** The learner's turn as a LangChain message. Audio goes to the model as is: it listens, nothing is transcribed. */
 export function learnerMessage(input: UserInput): HumanMessage {
   if (!isAudio(input)) return new HumanMessage(input);
   const audio = { type: "audio", source_type: "base64", mime_type: input.mimeType, data: input.audio };
@@ -44,7 +38,6 @@ export interface CriterionResult {
 
 export interface EvaluationResult {
   criteria: CriterionResult[];
-  /** 0..1, weighted by the experience's criteria weights. */
   score: number;
   passed: boolean;
   goalReached: boolean;
@@ -54,9 +47,7 @@ export interface EvaluationResult {
 
 export const ConversationState = Annotation.Root({
   ...MessagesAnnotation.spec,
-  /** "start" asks B for an opening line, "evaluate" ends the scene. Otherwise a user turn. */
   action: Annotation<"start" | "talk" | "evaluate">({ reducer: (_, b) => b, default: () => "talk" }),
-  /** The learner's line for this turn. Added to history together with B's reply, so a failed turn leaves no trace. */
   input: Annotation<UserInput | null>({ reducer: (_, b) => b, default: () => null }),
   turns: Annotation<number>({ reducer: (_, b) => b, default: () => 0 }),
   evaluation: Annotation<EvaluationResult | null>({ reducer: (_, b) => b, default: () => null }),
@@ -70,15 +61,6 @@ const EvalSchema = z.object({
   corrections: z.array(z.object({ original: z.string(), better: z.string() })),
 });
 
-/**
- * The Pato Talk loop as a LangGraph graph:
- *
- *   START ─▶ route ─┬─▶ character ─┬─▶ END            (one turn per invoke)
- *                   │              └─▶ evaluate ─▶ END (turn limit reached)
- *                   └─▶ evaluate ─▶ END               (user ends the scene)
- *
- * Conversation memory lives in the checkpointer (thread_id = session id), not in a database.
- */
 export function buildConversationGraph(opts: {
   experience: Experience;
   llm: BaseChatModel;
@@ -95,7 +77,7 @@ export function buildConversationGraph(opts: {
     const user = start || s.input == null ? null : learnerMessage(s.input);
     const history: BaseMessage[] = [system, ...s.messages, user ?? new HumanMessage("(The scene starts now. Say your first line to the learner, in character.)")];
     let text = "";
-    for (let i = 0; i < 2 && !text; i++) text = messageText(await llm.invoke(history)).trim(); // empty replies happen; retry once
+    for (let i = 0; i < 2 && !text; i++) text = messageText(await llm.invoke(history)).trim();
     if (!text) throw new Error("The language model returned an empty reply. Try again.");
     return { messages: user ? [user, new AIMessage(text)] : [new AIMessage(text)], turns: start ? s.turns : s.turns + 1, input: null };
   };
@@ -113,12 +95,10 @@ export function buildConversationGraph(opts: {
 
 const speaker = (exp: Experience, m: BaseMessage) => (m.getType() === "human" ? `Learner (${exp.characterA.role})` : exp.characterB.name);
 
-/** Text-only transcript; the learner's voice turns appear as "(spoke)". */
 export function transcript(exp: Experience, messages: BaseMessage[]): string {
   return messages.map((m) => `${speaker(exp, m)}: ${hasAudio(m) ? "(spoke)" : messageText(m)}`).join("\n");
 }
 
-/** The transcript as message content parts, with the learner's audio in place so the evaluator can hear it. */
 function transcriptParts(exp: Experience, messages: BaseMessage[]): any[] {
   const parts: any[] = [];
   for (const m of messages) {
@@ -162,7 +142,6 @@ export async function evaluateConversation(exp: Experience, messages: BaseMessag
   return scoreEvaluation(exp, raw);
 }
 
-/** Weighted 0..1 score from per-criterion scores. Unknown ids are ignored, missing ones count as 1. */
 export function scoreEvaluation(exp: Experience, raw: z.infer<typeof EvalSchema>): EvaluationResult {
   const { criteria: defs, scale, passThreshold } = exp.evaluation;
   const byId = new Map(raw.criteria.map((c) => [c.id, c]));

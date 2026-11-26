@@ -26,7 +26,6 @@ export interface Settings {
   tts: TTSChoice;
   ttsUrl: string;
   autoplay: boolean;
-  /** Always-on mic: talk any time, talking over the character interrupts it. */
   handsFree: boolean;
 }
 
@@ -59,7 +58,6 @@ export function llmConfig(s: Settings): LLMConfig {
   return { provider: "ollama", model, baseUrl: s.baseUrl || undefined };
 }
 
-// --- voice providers (cached: models are big) ---
 const ttsCache = new Map<string, TTSProvider>();
 export function ttsFor(s: Settings): TTSProvider | undefined {
   const id = `${s.tts}|${s.ttsUrl}|${s.apiKey}`;
@@ -86,7 +84,6 @@ export function ttsFor(s: Settings): TTSProvider | undefined {
   return t;
 }
 
-/** Kokoro needs kana for Japanese: ask the configured LLM for the pronunciation reading. */
 async function japaneseReading(s: Settings, text: string): Promise<string> {
   const llm = await createLLM(llmConfig(s));
   const r = await llm.invoke(
@@ -95,7 +92,6 @@ async function japaneseReading(s: Settings, text: string): Promise<string> {
   return messageText(r).trim();
 }
 
-// --- SQLite stats in the browser (sql.js), persisted to localStorage ---
 const DB_KEY = "patotalk.sqlite";
 let storePromise: Promise<StatsStore> | null = null;
 export function statsStore(): Promise<StatsStore> {
@@ -117,7 +113,6 @@ export async function engineFor(s: Settings): Promise<PatoTalk> {
   return new PatoTalk({ llm: llmConfig(s), tts: ttsFor(s), stats: await statsStore() });
 }
 
-// --- experiences: bundled examples + the user's own (localStorage) ---
 const bundled = import.meta.glob("../../../experiences/*.json", { eager: true, import: "default" });
 export const builtInExperiences: Experience[] = Object.values(bundled).map((e) => parseExperience(e));
 

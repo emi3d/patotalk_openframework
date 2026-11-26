@@ -1,21 +1,14 @@
 import { encodeWav } from "@patotalk/core";
 
-/** A recorded learner turn, ready for PatoTalk.say(). The model listens to it directly. */
 export interface RecordedVoice {
-  /** base64 WAV, 16 kHz mono */
   audio: string;
   mimeType: "audio/wav";
   seconds: number;
-  /** object URL for playing it back in the UI */
   url: string;
 }
 
 const TARGET_RATE = 16000;
 
-/**
- * Push-to-talk microphone recorder. No speech recognition, no transcription:
- * it records, converts to 16 kHz mono WAV (accepted by Gemini and OpenAI audio models) and hands it over.
- */
 export class VoiceRecorder {
   private rec?: MediaRecorder;
   private stream?: MediaStream;
@@ -52,7 +45,6 @@ export class VoiceRecorder {
     this.timer = setTimeout(() => this.opts.onAutoStop?.(), max * 1000);
   }
 
-  /** Stop and return the recording, or null if it was too short to contain speech. */
   async stop(minSeconds = 0.4): Promise<RecordedVoice | null> {
     const rec = this.rec;
     if (!rec || rec.state === "inactive") return null;
@@ -69,7 +61,6 @@ export class VoiceRecorder {
     return { audio: toBase64(wav), mimeType: "audio/wav", seconds: Math.round(seconds * 10) / 10, url: URL.createObjectURL(new Blob([wav as BlobPart], { type: "audio/wav" })) };
   }
 
-  /** Drop the current recording. */
   cancel() {
     this.done = undefined;
     if (this.rec && this.rec.state !== "inactive") {
@@ -94,7 +85,7 @@ async function decodeMono16k(buf: ArrayBuffer): Promise<Float32Array> {
     const len = Math.max(1, Math.ceil(decoded.duration * TARGET_RATE));
     const off = new OfflineAudioContext(1, len, TARGET_RATE);
     const src = off.createBufferSource();
-    src.buffer = decoded; // multi-channel input is down-mixed to mono by the 1-channel destination
+    src.buffer = decoded;
     src.connect(off.destination);
     src.start();
     return (await off.startRendering()).getChannelData(0);
@@ -103,7 +94,6 @@ async function decodeMono16k(buf: ArrayBuffer): Promise<Float32Array> {
   }
 }
 
-/** True when the peak level never rises above a whisper (mic muted or nothing said). */
 function isSilent(s: Float32Array, threshold = 0.01) {
   for (let i = 0; i < s.length; i++) if (Math.abs(s[i]) > threshold) return false;
   return true;
