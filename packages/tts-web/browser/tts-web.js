@@ -1,4 +1,4 @@
-// packages/tts-web/src/ja-kana.ts
+// src/ja-kana.ts
 var V = { a: "a", i: "i", u: "\u026F", e: "e", o: "o" };
 var ROWS = [
   ["\u3042\u3044\u3046\u3048\u304A", ""],
@@ -131,7 +131,7 @@ function kanaToKokoro(text) {
 }
 var hasKanji = (s) => /\p{Script=Han}/u.test(s);
 
-// packages/tts-web/src/kokoro.ts
+// src/kokoro.ts
 var KOKORO_VOICES = {
   en: { female: "af_heart", male: "am_michael" },
   "en-gb": { female: "bf_emma", male: "bm_george" },
@@ -161,8 +161,9 @@ var KokoroWebTTS = class {
         KOKORO_JS
       );
       return KokoroTTS.from_pretrained(this.opts.modelId ?? "onnx-community/Kokoro-82M-v1.0-ONNX", {
-        dtype: this.opts.dtype ?? (this.opts.device === "wasm" ? "q8" : "fp32"),
-        device: this.opts.device ?? (navigator.gpu ? "webgpu" : "wasm"),
+        dtype: this.opts.dtype ?? "fp32",
+        // WASM by default: in our tests WebGPU produced clipped/garbled audio for Japanese and French.
+        device: this.opts.device ?? "wasm",
         progress_callback: this.opts.onProgress
       });
     })();
@@ -216,7 +217,7 @@ var KokoroWebTTS = class {
   }
 };
 
-// packages/tts-web/src/supertonic.ts
+// src/supertonic.ts
 var SUPERTONIC_LANGUAGES = [
   "en",
   "ko",
@@ -298,7 +299,7 @@ var SupertonicWebTTS = class {
   }
 };
 
-// packages/tts-web/src/index.ts
+// src/index.ts
 var WebSpeechTTS = class {
   id = "web-speech";
   async synthesize(text, opts) {

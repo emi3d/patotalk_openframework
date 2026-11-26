@@ -43,8 +43,9 @@ export class KokoroWebTTS implements TTSProvider {
     this.tts ??= (async () => {
       const { KokoroTTS } = await import(/* @vite-ignore */ KOKORO_JS);
       return KokoroTTS.from_pretrained(this.opts.modelId ?? "onnx-community/Kokoro-82M-v1.0-ONNX", {
-        dtype: this.opts.dtype ?? (this.opts.device === "wasm" ? "q8" : "fp32"),
-        device: this.opts.device ?? ((navigator as any).gpu ? "webgpu" : "wasm"),
+        dtype: this.opts.dtype ?? "fp32",
+        // WASM by default: in our tests WebGPU produced clipped/garbled audio for Japanese and French.
+        device: this.opts.device ?? "wasm",
         progress_callback: this.opts.onProgress,
       });
     })();
