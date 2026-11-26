@@ -14,8 +14,19 @@ export interface SupertonicWebOptions {
 }
 
 const HF = "https://huggingface.co/Supertone/supertonic-3/resolve/main/";
-const ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-const ENGINE = "https://cdn.jsdelivr.net/npm/@yomiscript/supertonic@0.1.0/+esm";
+
+function gaussian(n: number): Float32Array {
+  const u = new Uint32Array(n + (n % 2));
+  for (let i = 0; i < u.length; i += 16384) crypto.getRandomValues(u.subarray(i, i + 16384));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i += 2) {
+    const r = Math.sqrt(-2 * Math.log((u[i] + 0.5) / 2 ** 32));
+    const t = (2 * Math.PI * (u[i + 1] + 0.5)) / 2 ** 32;
+    out[i] = r * Math.cos(t);
+    if (i + 1 < n) out[i + 1] = r * Math.sin(t);
+  }
+  return out;
+}
 
 export class SupertonicWebTTS implements TTSProvider {
   readonly id = "supertonic-web";
@@ -27,9 +38,8 @@ export class SupertonicWebTTS implements TTSProvider {
 
   load(): Promise<any> {
     this.engine ??= (async () => {
-      const ort = await import(/* @vite-ignore */ ORT + "ort.webgpu.bundle.min.mjs");
-      ort.env.wasm.wasmPaths = ORT;
-      const { SupertonicEngine } = await import(/* @vite-ignore */ ENGINE);
+      const ort = await import("onnxruntime-web/webgpu");
+      const { SupertonicEngine } = await import("@yomiscript/supertonic");
       const base = this.opts.baseUrl ?? HF;
       const load = async (path: string) => {
         this.opts.onProgress?.(path);
@@ -68,6 +78,7 @@ export class SupertonicWebTTS implements TTSProvider {
       lang: SUPERTONIC_LANGUAGES.includes(lang) ? lang : "na",
       steps: this.opts.steps ?? 8,
       speed: opts.speed ?? 1.05,
+      noise: gaussian,
     });
     return { samples: r.samples as Float32Array, sampleRate: r.sampleRate as number };
   }
