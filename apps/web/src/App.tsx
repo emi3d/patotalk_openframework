@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseExperience, toJSON, toMarkdown, type EvaluationResult, type Experience, type Session, type UserSummary } from "@patotalk/core";
-import { AudioPlayer, VoiceRecorder, WebSpeechTTS, type RecordedVoice } from "@patotalk/tts-web";
+import { AudioPlayer, EnergyDetector, HandsFreeMic, TenVadDetector, VoiceRecorder, WebSpeechTTS, type RecordedVoice, type VoiceDetector } from "@patotalk/tts-web";
+import { Duck } from "./Duck";
 import {
   builtInExperiences,
   deleteMyExperience,
@@ -138,7 +139,14 @@ interface Line {
   who: "user" | "char";
   text: string;
   /** learner voice turn: playback URL + length */
-  voice?: { url: string; seconds: number };
+  voice?: { url: string; seconds: number; interrupted?: boolean };
+}
+
+/** Roughly the part of a line that was heard before playback stopped. */
+function heardPart(text: string, fraction: number): string {
+  const cut = text.slice(0, Math.round(text.length * fraction));
+  const space = cut.lastIndexOf(" ");
+  return fraction >= 1 ? text : space > cut.length * 0.6 ? cut.slice(0, space) : cut;
 }
 
 function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; onExit: () => void }) {
@@ -154,6 +162,8 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   const player = useMemo(() => new AudioPlayer(), []);
   const fallback = useMemo(() => new WebSpeechTTS(), []);
   const speakId = useRef(0);
+  /** The character line being prepared or played, so talking over it can be reported as an interruption. */
+  const saying = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -166,6 +176,7 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     if (!tts || !text) return;
     const id = ++speakId.current;
     player.stop();
+    saying.current = text;
     const v = exp.characterB.voice;
     const opts = { lang: exp.meta.language, gender: v?.gender, voice: v?.id };
     setVoiceStatus("Preparing voice…");
@@ -181,7 +192,10 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
         await fallback.synthesize(text, { lang: exp.meta.language });
       } catch {}
     } finally {
-      if (id === speakId.current) setVoiceStatus((s) => (s.startsWith("Voice model failed") ? s : ""));
+      if (id === speakId.current) {
+        saying.current = "";
+        setVoiceStatus((s) => (s.startsWith("Voice model failed") ? s : ""));
+      }
     }
   };
 
@@ -222,7 +236,7 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   }, []);
 
   /** Send typed text or a recorded voice turn. Voice goes straight to the multimodal model: nothing is transcribed. */
-  const send = async (what: string | RecordedVoice) => {
+  const send = async (what: string | (RecordedVoice & { interrupted?: { heard: string } })) => {
     const voice = typeof what === "string" ? undefined : what;
     const text = typeof what === "string" ? what.trim() : "";
     if ((!voice && !text) || thinking || !sess.current || !eng.current) return;
@@ -230,10 +244,10 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     if (!voice) setInput("");
     player.stop();
     speakId.current++;
-    setLines((l) => [...l, voice ? { who: "user", text: "", voice: { url: voice.url, seconds: voice.seconds } } : { who: "user", text }]);
+    setLines((l) => [...l, voice ? { who: "user", text: "", voice: { url: voice.url, seconds: voice.seconds, interrupted: !!voice.interrupted } } : { who: "user", text }]);
     setThinking(`${exp.characterB.name} is listening…`);
     try {
-      const t = await eng.current.say(sess.current, voice ? { audio: voice.audio, mimeType: voice.mimeType, seconds: voice.seconds } : text, { speak: false });
+      const t = await eng.current.say(sess.current, voice ? { audio: voice.audio, mimeType: voice.mimeType, seconds: voice.seconds, interrupted: voice.interrupted } : text, { speak: false });
       setTurn(t.turn);
       setLines((l) => [...l, { who: "char", text: t.text }]);
       if (t.evaluation) setEvaluation(t.evaluation);
@@ -265,6 +279,34 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
 
   const [unsent, setUnsent] = useState<RecordedVoice | null>(null);
   const ready = !!sess.current && !thinking;
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const [handsFree, setHandsFree] = useState(settings.handsFree && HandsFreeMic.supported);
+  const hf = useHandsFree(handsFree, {
+    paused: !ready || !!evaluation,
+    isCharacterSpeaking: () => player.playing || (typeof speechSynthesis !== "undefined" && speechSynthesis.speaking),
+    onSpeechStart: () => {
+      // Talking over the character: stop it, and remember how much of its line was heard.
+      const line = saying.current;
+      if (!line) return;
+      interruption.current = { heard: heardPart(line, player.progress()) };
+      saying.current = "";
+      speakId.current++;
+      player.stop();
+    },
+    onUtterance: (v) => {
+      const interrupted = interruption.current;
+      interruption.current = undefined;
+      setUnsent(null);
+      sendRef.current({ ...v, interrupted });
+    },
+    onError: (e) => {
+      setErr(e);
+      setHandsFree(false);
+    },
+  });
+  const interruption = useRef<{ heard: string } | undefined>(undefined);
+  const duckState = hf.hearing ? "hearing" : thinking ? "thinking" : voiceStatus === "" && saying.current ? "talking" : hf.on ? "listening" : "idle";
   const mic = useMic((v) => {
     setUnsent(null);
     send(v);
@@ -309,13 +351,27 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
         )}
       </aside>
       <div className="chat">
+        <div className="stage">
+          <Duck level={player.level.bind(player)} state={duckState} />
+          <p className="muted">
+            {hf.hearing
+              ? "Listening to you…"
+              : thinking
+                ? thinking
+                : hf.on
+                  ? `Hands-free: just talk${hf.detector ? ` (${hf.detector})` : ""}. Talk over ${exp.characterB.name} to interrupt.`
+                  : hf.starting
+                    ? "Starting the microphone…"
+                    : ""}
+          </p>
+        </div>
         <div className="lines">
           {lines.map((l, i) => (
             <div key={i} className={`bubble ${l.who}`}>
               {l.who === "char" && <small>{exp.characterB.name}</small>}
               {l.voice ? (
                 <span className="voice">
-                  🎤 {l.voice.seconds.toFixed(1)} s <audio src={l.voice.url} controls preload="none" />
+                  🎤 {l.voice.seconds.toFixed(1)} s{l.voice.interrupted ? " ✋" : ""} <audio src={l.voice.url} controls preload="none" />
                 </span>
               ) : (
                 <span>{l.text}</span>
@@ -331,7 +387,7 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
           <div ref={endRef} />
         </div>
         {err && <p className="error">{err}</p>}
-        {thinking && <p className="muted">{thinking}</p>}
+        {thinking && !hf.on && <p className="muted">{thinking}</p>}
         {voiceStatus && <p className="muted">{voiceStatus}</p>}
         {!evaluation && (
           <form
@@ -341,7 +397,12 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
               send(input);
             }}
           >
-            {mic.supported && (
+            {HandsFreeMic.supported && (
+              <button type="button" className={handsFree ? "rec" : ""} onClick={() => setHandsFree((x) => !x)} title="Always-on microphone">
+                {handsFree ? "🎧 Hands-free on" : "🎧 Hands-free"}
+              </button>
+            )}
+            {mic.supported && !handsFree && (
               <button
                 type="button"
                 className={mic.on ? "rec" : ""}
@@ -422,6 +483,76 @@ function EvaluationCard({ ev, exp }: { ev: EvaluationResult; exp: Experience }) 
       )}
     </div>
   );
+}
+
+/** Always-on mic with a tiny VAD (TEN VAD, ~280 KB WASM; loudness fallback). Each utterance goes to the model as audio. */
+function useHandsFree(
+  enabled: boolean,
+  o: { paused: boolean; isCharacterSpeaking: () => boolean; onSpeechStart: () => void; onUtterance: (v: RecordedVoice) => void; onError: (e: string) => void },
+) {
+  const cb = useRef(o);
+  cb.current = o;
+  const mic = useRef<HandsFreeMic | undefined>(undefined);
+  const [on, setOn] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [hearing, setHearing] = useState(false);
+  const [detector, setDetector] = useState("");
+  useEffect(() => {
+    if (!enabled) return;
+    let dead = false;
+    setStarting(true);
+    (async () => {
+      const det: VoiceDetector = await TenVadDetector.load().catch((e) => {
+        console.warn("TEN VAD unavailable, using loudness detection", e);
+        return new EnergyDetector();
+      });
+      if (dead) return det.destroy?.();
+      const m = new HandsFreeMic({
+        detector: det,
+        isCharacterSpeaking: () => cb.current.isCharacterSpeaking(),
+        onSpeechStart: () => {
+          setHearing(true);
+          cb.current.onSpeechStart();
+        },
+        onUtterance: (v) => {
+          setHearing(false);
+          cb.current.onUtterance(v);
+        },
+        onDiscard: () => setHearing(false),
+      });
+      m.paused = cb.current.paused;
+      try {
+        await m.start();
+      } catch (e) {
+        m.destroy();
+        const n = (e as Error).name;
+        if (!dead)
+          cb.current.onError(
+            n === "NotAllowedError" ? "Microphone blocked. Allow it in the browser's site settings, or type instead." : `Microphone: ${(e as Error).message}`,
+          );
+        return;
+      } finally {
+        if (!dead) setStarting(false);
+      }
+      if (dead) return m.destroy();
+      mic.current = m;
+      setDetector(det.id === "ten-vad" ? "TEN VAD" : "loudness");
+      setOn(true);
+    })();
+    return () => {
+      dead = true;
+      mic.current?.destroy();
+      mic.current = undefined;
+      setOn(false);
+      setHearing(false);
+      setStarting(false);
+    };
+  }, [enabled]);
+  useEffect(() => {
+    if (mic.current) mic.current.paused = o.paused;
+    if (o.paused) setHearing(false);
+  }, [o.paused]);
+  return { on, starting, hearing, detector };
 }
 
 /** Push-to-talk: press to record, press again to send the audio itself to the model. No speech recognition. */
@@ -588,6 +719,10 @@ function SettingsView({ s, onChange }: { s: Settings; onChange: (s: Settings) =>
       )}
       <label className="check">
         <input type="checkbox" checked={s.autoplay} onChange={(e) => set("autoplay", e.target.checked)} /> Speak replies automatically
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={s.handsFree} onChange={(e) => set("handsFree", e.target.checked)} /> Hands-free: always-on mic, talk over the character to
+        interrupt (TEN VAD, a ~280 KB voice detector)
       </label>
     </section>
   );

@@ -14,14 +14,23 @@ export interface UserAudio {
   mimeType: string;
   /** Length in seconds, for stats. */
   seconds?: number;
+  /** Set when the learner talked over the character. `heard` is the part of its line that was played before it stopped. */
+  interrupted?: { heard: string };
 }
+
+/** Text the model gets in front of an interrupting turn. */
+export const interruptionNote = (heard: string) =>
+  heard.trim()
+    ? `USER INTERRUPTED you. They only heard this much of your last line: "${heard.trim()}…". The rest was not heard.`
+    : `USER INTERRUPTED you before hearing your last line.`;
 export const isAudio = (x: unknown): x is UserAudio => !!x && typeof x === "object" && "audio" in x;
 
 /** The learner's turn as a LangChain message. Audio goes to the model as is: it listens, nothing is transcribed. */
 export function learnerMessage(input: UserInput): HumanMessage {
   if (!isAudio(input)) return new HumanMessage(input);
+  const audio = { type: "audio", source_type: "base64", mime_type: input.mimeType, data: input.audio };
   return new HumanMessage({
-    content: [{ type: "audio", source_type: "base64", mime_type: input.mimeType, data: input.audio }] as any,
+    content: (input.interrupted ? [{ type: "text", text: interruptionNote(input.interrupted.heard) }, audio] : [audio]) as any,
     additional_kwargs: { patotalkAudioSeconds: input.seconds ?? 0 },
   });
 }
@@ -115,7 +124,7 @@ function transcriptParts(exp: Experience, messages: BaseMessage[]): any[] {
   for (const m of messages) {
     if (hasAudio(m)) {
       parts.push({ type: "text", text: `${speaker(exp, m)} (audio):` });
-      for (const p of m.content as any[]) if (p?.type === "audio") parts.push(p);
+      for (const p of m.content as any[]) if (p?.type === "audio" || p?.type === "text") parts.push(p);
     } else parts.push({ type: "text", text: `${speaker(exp, m)}: ${messageText(m)}` });
   }
   return parts;

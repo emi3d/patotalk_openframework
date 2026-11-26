@@ -12,6 +12,6 @@
     "@patotalk/core": "0.1.0"
   },
   "scripts": {
-    "build:browser": "esbuild src/index.ts --bundle --format=esm --platform=browser --external:@patotalk/core --outfile=browser/tts-web.js"
+    "build:browser": "esbuild src/index.ts --bundle --format=esm --platform=browser --alias:@patotalk/core=../core/src/tts.ts --outfile=browser/tts-web.js"
   }
 }

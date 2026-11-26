@@ -345,8 +345,29 @@ var SupertonicWebTTS = class {
   }
 };
 
+// ../core/src/tts.ts
+function encodeWav(samples, sampleRate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF");
+  v.setUint32(4, 36 + samples.length * 2, true);
+  str(8, "WAVE");
+  str(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, "data");
+  v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 32767, true);
+  return new Uint8Array(buf);
+}
+
 // src/recorder.ts
-import { encodeWav } from "@patotalk/core";
 var TARGET_RATE = 16e3;
 var VoiceRecorder = class {
   constructor(opts = {}) {
@@ -439,6 +460,199 @@ function toBase64(bytes) {
   return btoa(bin);
 }
 
+// src/handsfree.ts
+var RATE = 16e3;
+var HOP = 256;
+var EnergyDetector = class {
+  id = "energy";
+  floor = 4e-3;
+  process(frame) {
+    let sum = 0;
+    for (let i = 0; i < frame.length; i++) sum += (frame[i] / 32768) ** 2;
+    const rms = Math.sqrt(sum / frame.length);
+    this.floor = rms < this.floor ? this.floor * 0.9 + rms * 0.1 : this.floor * 0.999 + rms * 1e-3;
+    return Math.max(0, Math.min(1, (rms / Math.max(this.floor, 2e-3) - 2) / 4));
+  }
+};
+var TEN_VAD_URL = "https://cdn.jsdelivr.net/gh/TEN-framework/ten-vad@b425116336f400f1181a46ba2d58b913cc19d3e5/lib/Web/ten_vad.js";
+var TenVadDetector = class _TenVadDetector {
+  constructor(m, handlePtr, handle, audioPtr, probPtr, flagPtr) {
+    this.m = m;
+    this.handlePtr = handlePtr;
+    this.handle = handle;
+    this.audioPtr = audioPtr;
+    this.probPtr = probPtr;
+    this.flagPtr = flagPtr;
+  }
+  m;
+  handlePtr;
+  handle;
+  audioPtr;
+  probPtr;
+  flagPtr;
+  id = "ten-vad";
+  static async load(url = TEN_VAD_URL) {
+    const mod = await import(
+      /* @vite-ignore */
+      url
+    );
+    const m = await mod.default();
+    const handlePtr = m._malloc(4);
+    if (m._ten_vad_create(handlePtr, HOP, 0.5) !== 0) throw new Error("TEN VAD could not start");
+    const handle = m.HEAP32[handlePtr >> 2];
+    return new _TenVadDetector(m, handlePtr, handle, m._malloc(HOP * 2), m._malloc(4), m._malloc(4));
+  }
+  process(frame) {
+    this.m.HEAP16.set(frame, this.audioPtr >> 1);
+    if (this.m._ten_vad_process(this.handle, this.audioPtr, HOP, this.probPtr, this.flagPtr) !== 0) return 0;
+    return this.m.HEAPF32[this.probPtr >> 2];
+  }
+  destroy() {
+    this.m._ten_vad_destroy(this.handlePtr);
+    for (const p of [this.handlePtr, this.audioPtr, this.probPtr, this.flagPtr]) this.m._free(p);
+  }
+};
+var WORKLET = `class C extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(2048);this.n=0}
+process(i){const x=i[0]&&i[0][0];if(x){for(let k=0;k<x.length;k++){this.b[this.n++]=x[k];if(this.n===2048){this.port.postMessage(this.b.slice());this.n=0}}}return true}}
+registerProcessor("pt-capture",C)`;
+var HandsFreeMic = class {
+  constructor(o) {
+    this.o = o;
+  }
+  o;
+  ctx;
+  stream;
+  node;
+  // resampler state
+  pos = 0;
+  last = 0;
+  pending = [];
+  // VAD state
+  voiced = 0;
+  silent = 0;
+  speaking = false;
+  pre = [];
+  utter = [];
+  /** While paused (e.g. the model is answering) nothing is recorded. */
+  paused = false;
+  /** Last speech probability, for a UI meter. */
+  probability = 0;
+  static get supported() {
+    return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof AudioWorkletNode !== "undefined";
+  }
+  get listening() {
+    return !!this.node;
+  }
+  /** True while the learner is mid-utterance. */
+  get hearing() {
+    return this.speaking;
+  }
+  async start() {
+    if (this.node) return;
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    try {
+      this.ctx = new AudioContext();
+      const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
+      await this.ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const src = this.ctx.createMediaStreamSource(this.stream);
+      const node = new AudioWorkletNode(this.ctx, "pt-capture");
+      node.port.onmessage = (e) => this.feed(e.data);
+      src.connect(node);
+      this.node = node;
+    } catch (e) {
+      this.stop();
+      throw e;
+    }
+  }
+  stop() {
+    this.node?.port.close();
+    this.node?.disconnect();
+    this.node = void 0;
+    this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = void 0;
+    this.ctx?.close().catch(() => {
+    });
+    this.ctx = void 0;
+    this.reset();
+  }
+  destroy() {
+    this.stop();
+    this.o.detector.destroy?.();
+  }
+  reset() {
+    this.voiced = this.silent = 0;
+    this.speaking = false;
+    this.utter = [];
+    this.pre = [];
+  }
+  /** Linear resample to 16 kHz, then cut into 256-sample frames. */
+  feed(chunk) {
+    const step = this.ctx.sampleRate / RATE;
+    let pos = this.pos;
+    const get = (i) => i < 0 ? this.last : chunk[i];
+    while (pos < chunk.length - 1) {
+      const i = Math.floor(pos);
+      const f = pos - i;
+      this.pending.push(get(i) * (1 - f) + chunk[i + 1] * f);
+      pos += step;
+    }
+    this.pos = pos - chunk.length;
+    this.last = chunk[chunk.length - 1];
+    while (this.pending.length >= HOP) {
+      const frame = Int16Array.from(this.pending.splice(0, HOP), (v) => Math.max(-32768, Math.min(32767, v * 32768)));
+      this.frame(frame);
+    }
+  }
+  frame(f) {
+    if (this.paused) {
+      if (this.speaking || this.utter.length) this.reset();
+      return;
+    }
+    const o = this.o;
+    const p = this.probability = o.detector.process(f);
+    const ms = (frames) => frames * HOP * 1e3 / RATE;
+    const echoGuard = !this.speaking && !!o.isCharacterSpeaking?.();
+    const isVoice = p >= (echoGuard ? Math.max(0.7, o.threshold ?? 0.5) : o.threshold ?? 0.5);
+    if (!this.speaking) {
+      this.pre.push(f);
+      if (this.pre.length > 20) this.pre.shift();
+      this.voiced = isVoice ? this.voiced + 1 : 0;
+      if (ms(this.voiced) >= (echoGuard ? 190 : 80)) {
+        this.speaking = true;
+        this.silent = 0;
+        this.utter = this.pre;
+        this.pre = [];
+        o.onSpeechStart?.();
+      }
+      return;
+    }
+    this.utter.push(f);
+    this.silent = isVoice ? 0 : this.silent + 1;
+    const total = ms(this.utter.length);
+    if (ms(this.silent) >= (o.endSilenceMs ?? 800) || total >= (o.maxSeconds ?? 30) * 1e3) {
+      const frames = this.utter.slice(0, this.utter.length - Math.max(0, this.silent - 12));
+      const speechMs = total - ms(this.silent);
+      this.reset();
+      if (speechMs < (o.minSpeechMs ?? 350)) return o.onDiscard?.();
+      o.onUtterance(toVoice(frames));
+    }
+  }
+};
+function toVoice(frames) {
+  const samples = new Float32Array(frames.length * HOP);
+  frames.forEach((f, k) => {
+    for (let i = 0; i < HOP; i++) samples[k * HOP + i] = f[i] / 32768;
+  });
+  const wav = encodeWav(samples, RATE);
+  return {
+    audio: toBase64(wav),
+    mimeType: "audio/wav",
+    seconds: Math.round(samples.length / RATE * 10) / 10,
+    url: URL.createObjectURL(new Blob([wav], { type: "audio/wav" }))
+  };
+}
+
 // src/index.ts
 var WebSpeechTTS = class {
   id = "web-speech";
@@ -460,12 +674,21 @@ var WebSpeechTTS = class {
 var AudioPlayer = class {
   ctx;
   current;
+  analyser;
+  buf = new Float32Array(1024);
+  startedAt = 0;
+  duration = 0;
   async play(a) {
     this.stop();
     if (!a.data && !a.samples?.length) return;
     this.ctx ??= new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {
     });
+    if (!this.analyser) {
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 1024;
+      this.analyser.connect(this.ctx.destination);
+    }
     const buf = a.data ? await this.ctx.decodeAudioData(a.data.slice().buffer) : (() => {
       const b = this.ctx.createBuffer(1, a.samples.length, a.sampleRate ?? 24e3);
       b.copyToChannel(a.samples, 0);
@@ -473,15 +696,34 @@ var AudioPlayer = class {
     })();
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(this.ctx.destination);
+    src.connect(this.analyser);
     this.current = src;
+    this.duration = buf.duration;
     return new Promise((resolve) => {
       src.onended = () => {
         if (this.current === src) this.current = void 0;
         resolve();
       };
+      this.startedAt = this.ctx.currentTime;
       src.start();
     });
+  }
+  /** True while a clip is playing. */
+  get playing() {
+    return !!this.current;
+  }
+  /** Current output loudness, roughly 0..1. */
+  level() {
+    if (!this.current || !this.analyser) return 0;
+    this.analyser.getFloatTimeDomainData(this.buf);
+    let sum = 0;
+    for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
+    return Math.min(1, Math.sqrt(sum / this.buf.length) * 4);
+  }
+  /** Fraction (0..1) of the current clip played so far. */
+  progress() {
+    if (!this.current || !this.ctx || !this.duration) return 0;
+    return Math.min(1, (this.ctx.currentTime - this.startedAt) / this.duration);
   }
   stop() {
     try {
@@ -496,6 +738,7 @@ var AudioPlayer = class {
     this.ctx?.close().catch(() => {
     });
     this.ctx = void 0;
+    this.analyser = void 0;
   }
 };
 async function playAudio(a, ctx = new AudioContext()) {
@@ -519,10 +762,14 @@ function playBuffer(ctx, buf) {
 }
 export {
   AudioPlayer,
+  EnergyDetector,
+  HandsFreeMic,
   KOKORO_VOICES,
   KokoroWebTTS,
   SUPERTONIC_LANGUAGES,
   SupertonicWebTTS,
+  TEN_VAD_URL,
+  TenVadDetector,
   VoiceRecorder,
   WebSpeechTTS,
   cleanForSpeech,

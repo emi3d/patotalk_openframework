@@ -144,6 +144,8 @@ export function characterPrompt(exp: Experience): string {
     b.rules.length ? `Rules:\n${b.rules.map((r) => `- ${r}`).join("\n")}` : "",
     b.hiddenMotivation && `Hidden motivation (never state it directly): ${b.hiddenMotivation}`,
     exp.evaluation.successCondition && `The scene succeeds when: ${exp.evaluation.successCondition}`,
+    `The learner speaks to you with their voice (you receive their audio). Answer what they actually said; if it was unclear, ask them to repeat, as a real person would.`,
+    `If a message starts with USER INTERRUPTED, they talked over you: react naturally to what they said, and only repeat the part they missed if it still matters.`,
     `Your replies are converted to speech: plain spoken text only, no markdown, no emojis, no stage directions.`,
   ];
   return parts.filter(Boolean).join("\n");

@@ -5,6 +5,7 @@ export { SupertonicWebTTS, SUPERTONIC_LANGUAGES, type SupertonicWebOptions } fro
 export { kanaToKokoro, toHiragana, hasKanji } from "./ja-kana.js";
 export { cleanForSpeech, serial } from "./util.js";
 export { VoiceRecorder, type RecordedVoice } from "./recorder.js";
+export { HandsFreeMic, EnergyDetector, TenVadDetector, TEN_VAD_URL, type VoiceDetector, type HandsFreeOptions } from "./handsfree.js";
 
 /** The browser's built-in voices (Web Speech API). Speaks directly; returns no samples. */
 export class WebSpeechTTS implements TTSProvider {
@@ -25,15 +26,27 @@ export class WebSpeechTTS implements TTSProvider {
   }
 }
 
-/** Plays one clip at a time: starting a new clip stops the previous one. */
+/**
+ * Plays one clip at a time: starting a new clip stops the previous one.
+ * level() gives the output loudness (0..1) for lip-sync, progress() how much of the clip was heard (for interruptions).
+ */
 export class AudioPlayer {
   private ctx?: AudioContext;
   private current?: AudioBufferSourceNode;
+  private analyser?: AnalyserNode;
+  private buf = new Float32Array(1024);
+  private startedAt = 0;
+  private duration = 0;
   async play(a: SpeechAudio): Promise<void> {
     this.stop();
     if (!a.data && !a.samples?.length) return;
     this.ctx ??= new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {});
+    if (!this.analyser) {
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 1024;
+      this.analyser.connect(this.ctx.destination);
+    }
     const buf = a.data
       ? await this.ctx.decodeAudioData(a.data.slice().buffer)
       : (() => {
@@ -43,15 +56,34 @@ export class AudioPlayer {
         })();
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(this.ctx.destination);
+    src.connect(this.analyser);
     this.current = src;
+    this.duration = buf.duration;
     return new Promise<void>((resolve) => {
       src.onended = () => {
         if (this.current === src) this.current = undefined;
         resolve();
       };
+      this.startedAt = this.ctx!.currentTime;
       src.start();
     });
+  }
+  /** True while a clip is playing. */
+  get playing() {
+    return !!this.current;
+  }
+  /** Current output loudness, roughly 0..1. */
+  level(): number {
+    if (!this.current || !this.analyser) return 0;
+    this.analyser.getFloatTimeDomainData(this.buf);
+    let sum = 0;
+    for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
+    return Math.min(1, Math.sqrt(sum / this.buf.length) * 4);
+  }
+  /** Fraction (0..1) of the current clip played so far. */
+  progress(): number {
+    if (!this.current || !this.ctx || !this.duration) return 0;
+    return Math.min(1, (this.ctx.currentTime - this.startedAt) / this.duration);
   }
   stop() {
     try {
@@ -64,6 +96,7 @@ export class AudioPlayer {
     this.stop();
     this.ctx?.close().catch(() => {});
     this.ctx = undefined;
+    this.analyser = undefined;
   }
 }
 

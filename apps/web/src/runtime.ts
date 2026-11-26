@@ -26,6 +26,8 @@ export interface Settings {
   tts: TTSChoice;
   ttsUrl: string;
   autoplay: boolean;
+  /** Always-on mic: talk any time, talking over the character interrupts it. */
+  handsFree: boolean;
 }
 
 const KEY = "patotalk.settings";
@@ -38,6 +40,7 @@ export const defaultSettings: Settings = {
   tts: "supertonic",
   ttsUrl: "http://localhost:8880",
   autoplay: true,
+  handsFree: true,
 };
 
 export function loadSettings(): Settings {
