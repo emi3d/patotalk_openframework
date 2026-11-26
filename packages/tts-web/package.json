@@ -1,0 +1,17 @@
+{
+  "name": "@patotalk/tts-web",
+  "version": "0.1.0",
+  "description": "In-browser voice providers for Pato Talk: Kokoro-82M, Supertonic 3, Web Speech.",
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@patotalk/core": "0.1.0"
+  },
+  "scripts": {
+    "build:browser": "esbuild src/index.ts --bundle --format=esm --platform=browser --external:@patotalk/core --outfile=browser/tts-web.js"
+  }
+}

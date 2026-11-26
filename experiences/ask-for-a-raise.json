@@ -1,0 +1,87 @@
+{
+  "format": "patotalk.experience/v1",
+  "id": "ask-for-a-raise",
+  "version": "1.0.0",
+  "meta": {
+    "title": "Ask for a raise",
+    "description": "Performance review with a strict boss. Get better pay.",
+    "language": "en",
+    "userLanguage": "es",
+    "level": "B1",
+    "tags": [
+      "work",
+      "negotiation"
+    ],
+    "vocabulary": [
+      {
+        "term": "raise",
+        "meaning": "aumento de sueldo"
+      },
+      {
+        "term": "achievements",
+        "meaning": "logros"
+      },
+      {
+        "term": "profit",
+        "meaning": "ganancia"
+      },
+      {
+        "term": "savings",
+        "meaning": "ahorros"
+      }
+    ],
+    "tips": [
+      "Use numbers: sales, profit, savings.",
+      "Don't be shy!"
+    ],
+    "estimatedMinutes": 5
+  },
+  "characterA": {
+    "role": "Employee",
+    "brief": "You feel you deserve a raise (aumento de sueldo). You are in a meeting with your boss. Explain your achievements (logros) and ask for better pay. Don't be shy!"
+  },
+  "characterB": {
+    "name": "Mr. Sterling",
+    "role": "Strict Boss",
+    "context": "You are the user's boss in a performance review. The user wants more money.",
+    "personality": "Serious, focused on numbers, hard to impress.",
+    "emotionalState": "Impatient but listening.",
+    "rules": [
+      "Use B1 English only.",
+      "Max 3 sentences.",
+      "Implicit correction: if the user makes a mistake, repeat their idea correctly in your reply without pointing it out."
+    ],
+    "hiddenMotivation": "You will not agree to a raise unless the user mentions specific numbers or results (profit, sales, savings). Until then, remain skeptical.",
+    "voice": {
+      "gender": "male"
+    }
+  },
+  "evaluation": {
+    "criteria": [
+      {
+        "id": "evidence",
+        "description": "Gave concrete achievements with numbers (profit, sales, savings).",
+        "weight": 2
+      },
+      {
+        "id": "clarity",
+        "description": "Asked for the raise clearly and directly.",
+        "weight": 1
+      },
+      {
+        "id": "language",
+        "description": "Grammar and vocabulary appropriate for B1.",
+        "weight": 1
+      },
+      {
+        "id": "confidence",
+        "description": "Polite but confident tone; handled objections.",
+        "weight": 1
+      }
+    ],
+    "scale": 5,
+    "passThreshold": 0.6,
+    "successCondition": "Mr. Sterling agrees to discuss or approve a raise after hearing specific numbers."
+  },
+  "maxTurns": 8
+}

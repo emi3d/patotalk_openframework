@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .env
-data/progress.json
+*.local
+*.sqlite
+*.db
 .DS_Store
+out/

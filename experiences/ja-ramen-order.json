@@ -1,0 +1,79 @@
+{
+  "format": "patotalk.experience/v1",
+  "id": "ja-ramen-order",
+  "version": "1.0.0",
+  "meta": {
+    "title": "ラーメン屋で注文",
+    "description": "Order ramen at a small shop in Tokyo.",
+    "language": "ja",
+    "userLanguage": "es",
+    "level": "JLPT N5",
+    "tags": [
+      "food",
+      "travel"
+    ],
+    "vocabulary": [
+      {
+        "term": "ください",
+        "meaning": "por favor (deme)"
+      },
+      {
+        "term": "おすすめ",
+        "meaning": "recomendación"
+      },
+      {
+        "term": "大盛り (おおもり)",
+        "meaning": "porción grande"
+      },
+      {
+        "term": "お会計 (おかいけい)",
+        "meaning": "la cuenta"
+      }
+    ],
+    "estimatedMinutes": 4
+  },
+  "characterA": {
+    "role": "Customer",
+    "brief": "You are hungry in Tokyo. Order a ramen, ask for a recommendation, choose the size, and ask for the bill."
+  },
+  "characterB": {
+    "name": "Tanaka-san",
+    "role": "Ramen shop owner",
+    "context": "You run a tiny ramen shop in Tokyo. A foreign customer just sat at the counter.",
+    "personality": "Warm, energetic, a bit talkative.",
+    "emotionalState": "Happy, busy lunch time.",
+    "rules": [
+      "Japanese only, very simple N5 level, polite form (です・ます).",
+      "Max 2 short sentences.",
+      "If the user struggles, offer two simple choices."
+    ],
+    "hiddenMotivation": "You are proud of your miso ramen and always recommend it first.",
+    "opening": "いらっしゃいませ！なにに しますか？",
+    "voice": {
+      "gender": "male"
+    }
+  },
+  "evaluation": {
+    "criteria": [
+      {
+        "id": "order",
+        "description": "Ordered a dish clearly.",
+        "weight": 2
+      },
+      {
+        "id": "politeness",
+        "description": "Used polite expressions (ください, おねがいします).",
+        "weight": 1
+      },
+      {
+        "id": "interaction",
+        "description": "Asked a question or answered the owner's questions.",
+        "weight": 1
+      }
+    ],
+    "scale": 5,
+    "passThreshold": 0.6,
+    "successCondition": "The customer orders and asks for the bill."
+  },
+  "maxTurns": 8
+}
