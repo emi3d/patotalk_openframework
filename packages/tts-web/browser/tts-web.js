@@ -47,8 +47,6 @@ var SUPERTONIC_LANGUAGES = [
   "vi"
 ];
 var HF = "https://huggingface.co/Supertone/supertonic-3/resolve/main/";
-var ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-var ENGINE = "https://cdn.jsdelivr.net/npm/@yomiscript/supertonic@0.1.0/+esm";
 function gaussian(n) {
   const u = new Uint32Array(n + n % 2);
   for (let i = 0; i < u.length; i += 16384) crypto.getRandomValues(u.subarray(i, i + 16384));
@@ -73,15 +71,8 @@ var SupertonicWebTTS = class {
   wasmOnly = false;
   load() {
     this.engine ??= (async () => {
-      const ort = await import(
-        /* @vite-ignore */
-        ORT + "ort.webgpu.bundle.min.mjs"
-      );
-      ort.env.wasm.wasmPaths = ORT;
-      const { SupertonicEngine } = await import(
-        /* @vite-ignore */
-        ENGINE
-      );
+      const ort = await import("onnxruntime-web/webgpu");
+      const { SupertonicEngine } = await import("@yomiscript/supertonic");
       const base = this.opts.baseUrl ?? HF;
       const load = async (path) => {
         this.opts.onProgress?.(path);

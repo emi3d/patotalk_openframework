@@ -9,9 +9,11 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@patotalk/core": "0.1.0"
+    "@patotalk/core": "0.1.0",
+    "@yomiscript/supertonic": "0.1.0",
+    "onnxruntime-web": "1.22.0"
   },
   "scripts": {
-    "build:browser": "esbuild src/engines.ts --bundle --format=esm --platform=browser --alias:@patotalk/core=../core/src/tts.ts --outfile=browser/tts-web.js"
+    "build:browser": "esbuild src/engines.ts --bundle --format=esm --platform=browser --alias:@patotalk/core=../core/src/tts.ts --external:onnxruntime-web --external:@yomiscript/supertonic --outfile=browser/tts-web.js"
   }
 }

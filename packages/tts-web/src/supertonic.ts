@@ -14,8 +14,6 @@ export interface SupertonicWebOptions {
 }
 
 const HF = "https://huggingface.co/Supertone/supertonic-3/resolve/main/";
-const ORT = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-const ENGINE = "https://cdn.jsdelivr.net/npm/@yomiscript/supertonic@0.1.0/+esm";
 
 function gaussian(n: number): Float32Array {
   const u = new Uint32Array(n + (n % 2));
@@ -40,9 +38,8 @@ export class SupertonicWebTTS implements TTSProvider {
 
   load(): Promise<any> {
     this.engine ??= (async () => {
-      const ort = await import(/* @vite-ignore */ ORT + "ort.webgpu.bundle.min.mjs");
-      ort.env.wasm.wasmPaths = ORT;
-      const { SupertonicEngine } = await import(/* @vite-ignore */ ENGINE);
+      const ort = await import("onnxruntime-web/webgpu");
+      const { SupertonicEngine } = await import("@yomiscript/supertonic");
       const base = this.opts.baseUrl ?? HF;
       const load = async (path: string) => {
         this.opts.onProgress?.(path);
