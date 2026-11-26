@@ -62,7 +62,6 @@ export interface HandsFreeOptions {
   onSpeechStart?: () => void;
   onUtterance: (v: RecordedVoice) => void;
   onDiscard?: () => void;
-  isCharacterSpeaking?: () => boolean;
   threshold?: number;
   endSilenceMs?: number;
   minSpeechMs?: number;
@@ -169,14 +168,13 @@ export class HandsFreeMic {
     const o = this.o;
     const p = (this.probability = o.detector.process(f));
     const ms = (frames: number) => (frames * HOP * 1000) / RATE;
-    const echoGuard = !this.speaking && !!o.isCharacterSpeaking?.();
-    const isVoice = p >= (echoGuard ? Math.max(0.7, o.threshold ?? 0.5) : (o.threshold ?? 0.5));
+    const isVoice = p >= (o.threshold ?? 0.5);
 
     if (!this.speaking) {
       this.pre.push(f);
       if (this.pre.length > 20) this.pre.shift();
       this.voiced = isVoice ? this.voiced + 1 : 0;
-      if (ms(this.voiced) >= (echoGuard ? 190 : 80)) {
+      if (ms(this.voiced) >= 80) {
         this.speaking = true;
         this.silent = 0;
         this.utter = this.pre;

@@ -28,8 +28,6 @@ export class AudioPlayer {
   private current?: AudioBufferSourceNode;
   private analyser?: AnalyserNode;
   private buf = new Float32Array(1024);
-  private startedAt = 0;
-  private duration = 0;
   private closed = false;
   async play(a: SpeechAudio): Promise<void> {
     this.stop();
@@ -52,13 +50,11 @@ export class AudioPlayer {
     src.buffer = buf;
     src.connect(this.analyser);
     this.current = src;
-    this.duration = buf.duration;
     return new Promise<void>((resolve) => {
       src.onended = () => {
         if (this.current === src) this.current = undefined;
         resolve();
       };
-      this.startedAt = this.ctx!.currentTime;
       src.start();
     });
   }
@@ -71,10 +67,6 @@ export class AudioPlayer {
     let sum = 0;
     for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
     return Math.min(1, Math.sqrt(sum / this.buf.length) * 4);
-  }
-  progress(): number {
-    if (!this.current || !this.ctx || !this.duration) return 0;
-    return Math.min(1, (this.ctx.currentTime - this.startedAt) / this.duration);
   }
   stop() {
     try {

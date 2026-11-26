@@ -11,20 +11,15 @@ export interface UserAudio {
   audio: string;
   mimeType: string;
   seconds?: number;
-  interrupted?: { heard: string };
 }
 
-export const interruptionNote = (heard: string) =>
-  heard.trim()
-    ? `USER INTERRUPTED you. They only heard this much of your last line: "${heard.trim()}…". The rest was not heard.`
-    : `USER INTERRUPTED you before hearing your last line.`;
 export const isAudio = (x: unknown): x is UserAudio => !!x && typeof x === "object" && "audio" in x;
 
 export function learnerMessage(input: UserInput): HumanMessage {
   if (!isAudio(input)) return new HumanMessage(input);
   const audio = { type: "audio", source_type: "base64", mime_type: input.mimeType, data: input.audio };
   return new HumanMessage({
-    content: (input.interrupted ? [{ type: "text", text: interruptionNote(input.interrupted.heard) }, audio] : [audio]) as any,
+    content: [audio] as any,
     additional_kwargs: { patotalkAudioSeconds: input.seconds ?? 0 },
   });
 }

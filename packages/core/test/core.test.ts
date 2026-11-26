@@ -130,18 +130,13 @@ test("audio turns go to the model as audio (no transcription), stats count secon
   const human = llm.seen[1].find((m: any) => m.getType() === "human");
   assert.ok(Array.isArray(human.content) && human.content.some((p: any) => p.type === "audio" && p.data === wav), "model must receive the audio");
   await assert.rejects(pt.say(session, { audio: "", mimeType: "audio/wav" }), /Say something/);
-  llm.responses.splice(2, 0, "Sorry, go on.");
-  await pt.say(session, { audio: wav, mimeType: "audio/wav", seconds: 1, interrupted: { heard: "Numbers," } });
-  const cut = llm.seen[2].filter((m: any) => m.getType() === "human").at(-1);
-  assert.match(cut.content[0].text, /^USER INTERRUPTED .*"Numbers,…"/);
-  assert.equal(cut.content[1].type, "audio");
   await pt.end(session);
   const evalCall = llm.seen.at(-1)!;
   assert.ok(JSON.stringify(evalCall.map((m: any) => m.content)).includes(wav), "evaluator hears the audio too");
   const h = await pt.history(session);
   assert.equal(h[1].text, "(voice)");
   const s = await pt.summary("emi");
-  assert.equal(s?.totalSpeakingSeconds, 3.5);
+  assert.equal(s?.totalSpeakingSeconds, 2.5);
   assert.equal(s?.totalWords, 0);
 });
 

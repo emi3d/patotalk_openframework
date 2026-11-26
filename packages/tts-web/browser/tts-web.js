@@ -438,13 +438,12 @@ var HandsFreeMic = class {
     const o = this.o;
     const p = this.probability = o.detector.process(f);
     const ms = (frames) => frames * HOP * 1e3 / RATE;
-    const echoGuard = !this.speaking && !!o.isCharacterSpeaking?.();
-    const isVoice = p >= (echoGuard ? Math.max(0.7, o.threshold ?? 0.5) : o.threshold ?? 0.5);
+    const isVoice = p >= (o.threshold ?? 0.5);
     if (!this.speaking) {
       this.pre.push(f);
       if (this.pre.length > 20) this.pre.shift();
       this.voiced = isVoice ? this.voiced + 1 : 0;
-      if (ms(this.voiced) >= (echoGuard ? 190 : 80)) {
+      if (ms(this.voiced) >= 80) {
         this.speaking = true;
         this.silent = 0;
         this.utter = this.pre;
@@ -502,8 +501,6 @@ var AudioPlayer = class {
   current;
   analyser;
   buf = new Float32Array(1024);
-  startedAt = 0;
-  duration = 0;
   closed = false;
   async play(a) {
     this.stop();
@@ -525,13 +522,11 @@ var AudioPlayer = class {
     src.buffer = buf;
     src.connect(this.analyser);
     this.current = src;
-    this.duration = buf.duration;
     return new Promise((resolve) => {
       src.onended = () => {
         if (this.current === src) this.current = void 0;
         resolve();
       };
-      this.startedAt = this.ctx.currentTime;
       src.start();
     });
   }
@@ -544,10 +539,6 @@ var AudioPlayer = class {
     let sum = 0;
     for (let i = 0; i < this.buf.length; i++) sum += this.buf[i] * this.buf[i];
     return Math.min(1, Math.sqrt(sum / this.buf.length) * 4);
-  }
-  progress() {
-    if (!this.current || !this.ctx || !this.duration) return 0;
-    return Math.min(1, (this.ctx.currentTime - this.startedAt) / this.duration);
   }
   stop() {
     try {
