@@ -40,3 +40,4 @@ table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--li
 fieldset{border:1px solid var(--line);border-radius:14px;padding:6px 14px 10px}legend{font-weight:700;padding:0 6px}
 .json{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;max-height:60vh;font-size:13px}
 @media(max-width:760px){.play{grid-template-columns:1fr}.play aside{border:0;padding:0}.bubble{max-width:92%}}
+.voice{display:flex;align-items:center;gap:.5em}.voice audio{height:28px;max-width:200px}

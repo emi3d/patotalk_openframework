@@ -2,6 +2,8 @@
 
 Practice a language by talking your way through a situation: asking your boss for a raise, ordering ramen in Tokyo, buying bread in Paris. A character plays the other side, and when you're done you get a score and corrections.
 
+You talk, it listens. Your voice goes straight to a multimodal model, which hears how you actually said it (pronunciation and hesitations included) and answers in text. Nothing transcribes your voice first. Only the character's reply is turned into speech.
+
 Each situation is a small file called an *experience*. Write one, share it, and run it in any app built on this framework.
 
 ## Run it
@@ -13,26 +15,30 @@ npm install
 npm run web
 ```
 
-Open http://localhost:5173, go to **Settings**, and paste a Gemini API key. You can get a free one at aistudio.google.com/apikey.
+Open http://localhost:5173, go to **Settings**, and paste a Gemini API key. You can get a free one at aistudio.google.com/apikey. In a scene, press **Speak**, talk, and press it again to send. Typing works too.
 
 To have two AIs play a whole scene against each other in the terminal, first copy `.env.example` to `.env` and put your key in it. Then run:
 
 ```bash
 npm run selftest                          # ask-for-a-raise
 npm run selftest -- ja-ramen-order --turns 3
+npm run selftest -- --voice               # the simulated learner speaks; the model hears audio
 ```
 
 ## How it fits together
 
-- **LLM**: Gemini, anything OpenAI-compatible, Ollama, or any LangChain chat model.
+- **LLM**: must accept audio input. Gemini does out of the box; OpenAI-compatible audio models (like gpt-4o-mini-audio-preview) and any LangChain chat model that takes audio work too. A text-only model still runs if the learner types.
+- **Your voice in**: the app records a 16 kHz WAV and sends it as a LangChain audio block. No speech recognition anywhere.
 - **Loop**: a small LangGraph graph. Each message is one turn, and the scene is evaluated when you end it or run out of turns.
-- **Voice**: Supertonic 3 by default, running in the browser. Kokoro, the browser's own voices, Gemini TTS, or any `/v1/audio/speech` server also work.
-- **Stats**: SQLite (in the browser, in Node, or with expo-sqlite) or Postgres. Only scores and counts are saved, never the conversation.
+- **Voice out**: Supertonic 3 by default, running in the browser. Kokoro, the browser's own voices, Gemini TTS, or any `/v1/audio/speech` server also work.
+- **Evaluation**: the evaluator hears your recordings too, so it can comment on pronunciation and fluency.
+- **Stats**: SQLite (in the browser, in Node, or with expo-sqlite) or Postgres. Only scores, counts and seconds spoken are saved, never the conversation or the audio.
 
 ```ts
 const pt = new PatoTalk({ llm: { provider: "gemini", apiKey }, tts, stats });
 const { session, opening } = await pt.start(experience, { userId: "emi" });
-const reply = await pt.say(session, "I increased sales by 25%.");
+const reply = await pt.say(session, { audio: wavBase64, mimeType: "audio/wav", seconds: 4.2 });
+// or, typed: await pt.say(session, "I increased sales by 25%.");
 const result = await pt.end(session); // score, passed, feedback, corrections
 ```
 
@@ -58,7 +64,7 @@ I tested both models in the browser on Windows:
 
 ```
 packages/core      the framework (runs in Node, the browser, and React Native)
-packages/tts-web   browser voices
+packages/tts-web   browser audio: mic recorder and voices
 apps/web           the web app
 experiences/       example scenes
 scripts/selftest   AI-vs-AI test run

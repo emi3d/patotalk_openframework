@@ -6,6 +6,27 @@ import { z } from "zod";
 import { characterPrompt, type Experience } from "./experience.js";
 import { messageText } from "./llm.js";
 
+/** What the learner says in a turn: their recorded voice (preferred) or typed text. */
+export type UserInput = string | UserAudio;
+export interface UserAudio {
+  /** Base64 audio. WAV or MP3 work with every multimodal provider. */
+  audio: string;
+  mimeType: string;
+  /** Length in seconds, for stats. */
+  seconds?: number;
+}
+export const isAudio = (x: unknown): x is UserAudio => !!x && typeof x === "object" && "audio" in x;
+
+/** The learner's turn as a LangChain message. Audio goes to the model as is: it listens, nothing is transcribed. */
+export function learnerMessage(input: UserInput): HumanMessage {
+  if (!isAudio(input)) return new HumanMessage(input);
+  return new HumanMessage({
+    content: [{ type: "audio", source_type: "base64", mime_type: input.mimeType, data: input.audio }] as any,
+    additional_kwargs: { patotalkAudioSeconds: input.seconds ?? 0 },
+  });
+}
+const hasAudio = (m: BaseMessage) => Array.isArray(m.content) && m.content.some((p: any) => p?.type === "audio");
+
 export interface CriterionResult {
   id: string;
   score: number;
@@ -27,7 +48,7 @@ export const ConversationState = Annotation.Root({
   /** "start" asks B for an opening line, "evaluate" ends the scene. Otherwise a user turn. */
   action: Annotation<"start" | "talk" | "evaluate">({ reducer: (_, b) => b, default: () => "talk" }),
   /** The learner's line for this turn. Added to history together with B's reply, so a failed turn leaves no trace. */
-  input: Annotation<string>({ reducer: (_, b) => b, default: () => "" }),
+  input: Annotation<UserInput | null>({ reducer: (_, b) => b, default: () => null }),
   turns: Annotation<number>({ reducer: (_, b) => b, default: () => 0 }),
   evaluation: Annotation<EvaluationResult | null>({ reducer: (_, b) => b, default: () => null }),
 });
@@ -62,12 +83,12 @@ export function buildConversationGraph(opts: {
   const character = async (s: ConversationStateType) => {
     const start = s.action === "start";
     if (start && exp.characterB.opening) return { messages: [new AIMessage(exp.characterB.opening)] };
-    const user = start ? null : new HumanMessage(s.input);
+    const user = start || s.input == null ? null : learnerMessage(s.input);
     const history: BaseMessage[] = [system, ...s.messages, user ?? new HumanMessage("(The scene starts now. Say your first line to the learner, in character.)")];
     let text = "";
     for (let i = 0; i < 2 && !text; i++) text = messageText(await llm.invoke(history)).trim(); // empty replies happen; retry once
     if (!text) throw new Error("The language model returned an empty reply. Try again.");
-    return { messages: user ? [user, new AIMessage(text)] : [new AIMessage(text)], turns: start ? s.turns : s.turns + 1, input: "" };
+    return { messages: user ? [user, new AIMessage(text)] : [new AIMessage(text)], turns: start ? s.turns : s.turns + 1, input: null };
   };
 
   const evaluate = async (s: ConversationStateType) => ({ evaluation: await evaluateConversation(exp, s.messages, evaluator) });
@@ -81,10 +102,23 @@ export function buildConversationGraph(opts: {
     .compile({ checkpointer: opts.checkpointer ?? new MemorySaver() });
 }
 
+const speaker = (exp: Experience, m: BaseMessage) => (m.getType() === "human" ? `Learner (${exp.characterA.role})` : exp.characterB.name);
+
+/** Text-only transcript; the learner's voice turns appear as "(spoke)". */
 export function transcript(exp: Experience, messages: BaseMessage[]): string {
-  return messages
-    .map((m) => `${m instanceof HumanMessage || m.getType() === "human" ? `Learner (${exp.characterA.role})` : exp.characterB.name}: ${messageText(m)}`)
-    .join("\n");
+  return messages.map((m) => `${speaker(exp, m)}: ${hasAudio(m) ? "(spoke)" : messageText(m)}`).join("\n");
+}
+
+/** The transcript as message content parts, with the learner's audio in place so the evaluator can hear it. */
+function transcriptParts(exp: Experience, messages: BaseMessage[]): any[] {
+  const parts: any[] = [];
+  for (const m of messages) {
+    if (hasAudio(m)) {
+      parts.push({ type: "text", text: `${speaker(exp, m)} (audio):` });
+      for (const p of m.content as any[]) if (p?.type === "audio") parts.push(p);
+    } else parts.push({ type: "text", text: `${speaker(exp, m)}: ${messageText(m)}` });
+  }
+  return parts;
 }
 
 export async function evaluateConversation(exp: Experience, messages: BaseMessage[], llm: BaseChatModel): Promise<EvaluationResult> {
@@ -98,20 +132,21 @@ export async function evaluateConversation(exp: Experience, messages: BaseMessag
     `Score each criterion from 1 to ${ev.scale}:`,
     ...ev.criteria.map((c) => `- ${c.id}: ${c.description}`),
     `Write feedback (2-3 sentences) and corrections in ${exp.meta.userLanguage ?? "the learner's target language"}.`,
-    `corrections: up to 3 of the learner's actual sentences with a better version.`,
+    `corrections: up to 3 of the learner's actual sentences (write what you heard) with a better version.`,
+    `Where the learner spoke in audio, also judge pronunciation and fluency inside the relevant criteria.`,
     `Reply as JSON: {"criteria":[{"id","score","comment"}],"goalReached":bool,"feedback":string,"corrections":[{"original","better"}]}`,
     ``,
-    `Transcript:`,
-    transcript(exp, messages),
+    `Conversation:`,
   ]
     .filter((l) => l !== "")
     .join("\n");
+  const input = [new HumanMessage({ content: [{ type: "text", text: prompt }, ...transcriptParts(exp, messages)] as any })];
 
   let raw: z.infer<typeof EvalSchema>;
   try {
-    raw = (await llm.withStructuredOutput(EvalSchema).invoke(prompt)) as z.infer<typeof EvalSchema>;
+    raw = (await llm.withStructuredOutput(EvalSchema).invoke(input)) as z.infer<typeof EvalSchema>;
   } catch {
-    const text = messageText(await llm.invoke(prompt));
+    const text = messageText(await llm.invoke(input));
     const m = text.match(/\{[\s\S]*\}/);
     raw = EvalSchema.parse(JSON.parse(m ? m[0] : text));
   }

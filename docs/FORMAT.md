@@ -20,6 +20,8 @@ An experience is one JSON object, or a Markdown file that holds one ```` ```json
 
 Scoring: each criterion is scored from 1 to `scale`. The total is the weighted mean of `(score-1)/(scale-1)`, so it runs from 0 to 1, and `passed = score ≥ passThreshold`.
 
+The learner's turns reach the model as audio, and so does the evaluator's copy of the conversation. Criteria can therefore judge how something was said, not only what was said, for example `{ "id": "pronunciation", "description": "Clear pronunciation of the vocabulary" }`.
+
 ## Example
 
 The "ask for a raise" scene, saved in this format, is `experiences/ask-for-a-raise.json`.

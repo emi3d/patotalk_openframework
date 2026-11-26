@@ -4,6 +4,10 @@
 Learn through simulated audio experiences.
 Modular. Any LLM provider. Any voice provider. Local or cloud.
 
+## Core principle
+- The LLM is multimodal: it listens to the learner's audio directly. No speech-to-text step.
+- LLM answers in text. TTS is used only for output.
+
 ## Experience (portable file: JSON / MD)
 - `evaluation` — rubric, criteria, pass rules.
 - `characterA` — the user: role, goal, context.
@@ -19,9 +23,9 @@ Modular. Any LLM provider. Any voice provider. Local or cloud.
 
 ## Framework
 - LangChain + LangGraph (open-source JS).
-- Pieces: language provider → loop (graph) → text-to-voice. Nothing else.
-- Providers: local or cloud (Gemini, OpenAI-compatible, Ollama… / Kokoro, Supertonic, cloud TTS…).
-- SQL DB (local or cloud, e.g. SQLite / Postgres): user stats only. No conversations stored.
+- Pieces: mic audio → multimodal language provider → loop (graph) → text-to-voice. Nothing else.
+- Providers: local or cloud. LLM must accept audio (Gemini, OpenAI audio models…). TTS: Kokoro, Supertonic, cloud TTS…
+- SQL DB (local or cloud, e.g. SQLite / Postgres): user stats only. No conversations or audio stored.
 
 ## Targets
 1. Web MVP.

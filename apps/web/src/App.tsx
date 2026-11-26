@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseExperience, toJSON, toMarkdown, type EvaluationResult, type Experience, type Session, type UserSummary } from "@patotalk/core";
-import { AudioPlayer, WebSpeechTTS } from "@patotalk/tts-web";
+import { AudioPlayer, VoiceRecorder, WebSpeechTTS, type RecordedVoice } from "@patotalk/tts-web";
 import {
   builtInExperiences,
   deleteMyExperience,
@@ -137,6 +137,8 @@ function Library({ onPlay, onEdit }: { onPlay: (e: Experience) => void; onEdit: 
 interface Line {
   who: "user" | "char";
   text: string;
+  /** learner voice turn: playback URL + length */
+  voice?: { url: string; seconds: number };
 }
 
 function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; onExit: () => void }) {
@@ -219,27 +221,30 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     };
   }, []);
 
-  const send = async (text: string) => {
-    text = text.trim();
-    if (!text || thinking || !sess.current || !eng.current) return;
+  /** Send typed text or a recorded voice turn. Voice goes straight to the multimodal model: nothing is transcribed. */
+  const send = async (what: string | RecordedVoice) => {
+    const voice = typeof what === "string" ? undefined : what;
+    const text = typeof what === "string" ? what.trim() : "";
+    if ((!voice && !text) || thinking || !sess.current || !eng.current) return;
     setErr("");
-    setInput("");
+    if (!voice) setInput("");
     player.stop();
     speakId.current++;
-    setLines((l) => [...l, { who: "user", text }]);
-    setThinking(`${exp.characterB.name} is thinking…`);
+    setLines((l) => [...l, voice ? { who: "user", text: "", voice: { url: voice.url, seconds: voice.seconds } } : { who: "user", text }]);
+    setThinking(`${exp.characterB.name} is listening…`);
     try {
-      const t = await eng.current.say(sess.current, text, { speak: false });
+      const t = await eng.current.say(sess.current, voice ? { audio: voice.audio, mimeType: voice.mimeType, seconds: voice.seconds } : text, { speak: false });
       setTurn(t.turn);
       setLines((l) => [...l, { who: "char", text: t.text }]);
       if (t.evaluation) setEvaluation(t.evaluation);
       setThinking("");
       if (settings.autoplay) speak(t.text);
     } catch (x) {
-      // The turn was not stored: take the bubble back and give the text back to retry.
+      // The turn was not stored: take the bubble back. Typed text goes back in the box, a recording can be resent.
       setLines((l) => l.slice(0, -1));
-      setInput(text);
-      setErr(friendly(x));
+      if (voice) setUnsent(voice);
+      else setInput(text);
+      setErr(friendly(x, !!voice));
     } finally {
       setThinking("");
     }
@@ -258,8 +263,13 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
     }
   };
 
-  const mic = useMic(exp.meta.language, (t) => setInput(t), (e) => setErr(e));
+  const [unsent, setUnsent] = useState<RecordedVoice | null>(null);
   const ready = !!sess.current && !thinking;
+  const mic = useMic((v) => {
+    setUnsent(null);
+    send(v);
+  }, setErr);
+  useEffect(() => () => mic.cancel(), []);
 
   return (
     <section className="play">
@@ -303,7 +313,13 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
           {lines.map((l, i) => (
             <div key={i} className={`bubble ${l.who}`}>
               {l.who === "char" && <small>{exp.characterB.name}</small>}
-              <span>{l.text}</span>
+              {l.voice ? (
+                <span className="voice">
+                  🎤 {l.voice.seconds.toFixed(1)} s <audio src={l.voice.url} controls preload="none" />
+                </span>
+              ) : (
+                <span>{l.text}</span>
+              )}
               {l.who === "char" && ttsFor(settings) && (
                 <button className="replay" title="Play again" onClick={() => speak(l.text)}>
                   🔊
@@ -326,11 +342,27 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
             }}
           >
             {mic.supported && (
-              <button type="button" className={mic.on ? "rec" : ""} onClick={mic.toggle} title="Speak" disabled={!ready}>
-                🎤
+              <button
+                type="button"
+                className={mic.on ? "rec" : ""}
+                onClick={mic.on ? mic.stop : mic.start}
+                title={mic.on ? "Stop and send" : "Hold a thought, press, speak, press again to send"}
+                disabled={!ready && !mic.on}
+              >
+                {mic.on ? `■ Send ${mic.elapsed}s` : "🎤 Speak"}
               </button>
             )}
-            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Answer ${exp.characterB.name}…`} />
+            {mic.on && (
+              <button type="button" onClick={mic.cancel}>
+                Cancel
+              </button>
+            )}
+            {unsent && !mic.on && (
+              <button type="button" onClick={() => send(unsent)} disabled={!ready}>
+                Resend voice
+              </button>
+            )}
+            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={mic.supported ? "…or type" : `Answer ${exp.characterB.name}…`} disabled={mic.on} />
             <button className="primary" disabled={!ready || !input.trim()}>
               Send
             </button>
@@ -345,12 +377,14 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
 }
 
 /** Error text a learner can act on. */
-function friendly(x: unknown): string {
+function friendly(x: unknown, voice = false): string {
   const m = String((x as Error)?.message ?? x);
+  if (voice && /audio|input_audio|modalit|mime|not supported|unsupported|INVALID_ARGUMENT|400/i.test(m))
+    return "This model can't listen to audio. Pick a multimodal model in Settings (Gemini works), or type your answer.";
   if (/API key|401|403|PERMISSION|API_KEY/i.test(m)) return "The API key was rejected. Check it in Settings.";
   if (/429|quota|RESOURCE_EXHAUSTED/i.test(m)) return "The model is rate-limited right now. Wait a few seconds and send again.";
   if (/503|overloaded|UNAVAILABLE/i.test(m)) return "The model is busy right now. Send again in a moment.";
-  if (/Failed to fetch|NetworkError|network/i.test(m)) return "No connection to the model. Check your internet (or that the local server is running) and send again.";
+  if (/Failed to fetch|NetworkError|network/i.test(m)) return `No connection to the model. Check your internet (or that the local server is running) and ${voice ? "press Resend voice" : "send again"}.`;
   return m;
 }
 
@@ -390,30 +424,53 @@ function EvaluationCard({ ev, exp }: { ev: EvaluationResult; exp: Experience }) 
   );
 }
 
-function useMic(lang: string, onText: (t: string) => void, onError: (e: string) => void) {
-  const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+/** Push-to-talk: press to record, press again to send the audio itself to the model. No speech recognition. */
+function useMic(onVoice: (v: RecordedVoice) => void, onError: (e: string) => void) {
   const [on, setOn] = useState(false);
-  const rec = useRef<any>(null);
-  const toggle = () => {
-    if (on) return rec.current?.stop();
-    const r = new SR();
-    r.lang = lang;
-    r.interimResults = true;
-    r.onresult = (e: any) => onText(Array.from(e.results as ArrayLike<any>).map((x) => x[0].transcript).join(""));
-    r.onend = () => setOn(false);
-    r.onerror = (e: any) => {
-      setOn(false);
-      onError(e.error === "not-allowed" ? "Microphone blocked. Allow it in the browser, or type instead." : `Microphone: ${e.error}`);
-    };
-    rec.current = r;
+  const [elapsed, setElapsed] = useState(0);
+  const tick = useRef<ReturnType<typeof setInterval>>(undefined);
+  const stopRef = useRef<() => void>(() => {});
+  const rec = useMemo(() => new VoiceRecorder({ maxSeconds: 60, onAutoStop: () => stopRef.current() }), []);
+  const reset = () => {
+    clearInterval(tick.current);
+    setOn(false);
+    setElapsed(0);
+  };
+  const start = async () => {
+    onError("");
     try {
-      r.start();
+      await rec.start();
       setOn(true);
+      const t0 = Date.now();
+      tick.current = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 250);
     } catch (e) {
-      onError(`Microphone: ${(e as Error).message}`);
+      reset();
+      const n = (e as Error).name;
+      onError(
+        n === "NotAllowedError"
+          ? "Microphone blocked. Allow it in the browser's site settings, or type instead."
+          : n === "NotFoundError"
+            ? "No microphone found. Plug one in, or type instead."
+            : `Microphone: ${(e as Error).message}`,
+      );
     }
   };
-  return { supported: !!SR, on, toggle };
+  const stop = async () => {
+    reset();
+    try {
+      const v = await rec.stop();
+      if (v) onVoice(v);
+      else onError("I didn't hear anything. Press Speak and talk a bit longer (check the mic isn't muted).");
+    } catch (e) {
+      onError(`Couldn't read the recording: ${(e as Error).message}`);
+    }
+  };
+  stopRef.current = stop;
+  const cancel = () => {
+    rec.cancel();
+    reset();
+  };
+  return { supported: VoiceRecorder.supported, on, elapsed, start, stop, cancel };
 }
 
 function Stats({ userId }: { userId: string }) {
@@ -441,7 +498,10 @@ function Stats({ userId }: { userId: string }) {
           <b>{s.streakDays}</b>day streak
         </div>
         <div>
-          <b>{s.totalWords}</b>words spoken
+          <b>{Math.round(s.totalSpeakingSeconds / 6) / 10}</b>minutes spoken
+        </div>
+        <div>
+          <b>{s.totalWords}</b>words typed
         </div>
       </div>
       <h3>By experience</h3>
@@ -480,6 +540,10 @@ function SettingsView({ s, onChange }: { s: Settings; onChange: (s: Settings) =>
         <input value={s.userId} onChange={(e) => set("userId", e.target.value)} />
       </label>
       <h3>Language provider</h3>
+      <p className="muted">
+        The model listens to your voice directly, so it must accept audio input. Gemini models do. With OpenAI-compatible servers pick an audio model
+        (for example gpt-4o-mini-audio-preview). Text-only models still work if you type.
+      </p>
       <label>
         Provider
         <select value={s.llm} onChange={(e) => set("llm", e.target.value as Settings["llm"])}>
@@ -496,7 +560,7 @@ function SettingsView({ s, onChange }: { s: Settings; onChange: (s: Settings) =>
       )}
       <label>
         Model (blank = default)
-        <input value={s.model} onChange={(e) => set("model", e.target.value)} placeholder={s.llm === "gemini" ? "gemini-3.5-flash-lite" : s.llm === "openai" ? "gpt-4o-mini" : "llama3.1"} />
+        <input value={s.model} onChange={(e) => set("model", e.target.value)} placeholder={s.llm === "gemini" ? "gemini-3.5-flash-lite" : s.llm === "openai" ? "gpt-4o-mini-audio-preview" : "an audio-capable model"} />
       </label>
       {s.llm !== "gemini" && (
         <label>

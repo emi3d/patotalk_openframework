@@ -22,10 +22,14 @@ export const STATS_SCHEMA = [
     user_words INTEGER NOT NULL DEFAULT 0,
     score REAL,
     passed INTEGER,
-    criteria_json TEXT
+    criteria_json TEXT,
+    speaking_seconds REAL NOT NULL DEFAULT 0
   )`,
   `CREATE INDEX IF NOT EXISTS pt_attempts_user ON pt_attempts(user_id, started_at)`,
 ];
+
+/** Columns added after v1. Each is tried once; "duplicate column" errors are ignored. */
+export const STATS_MIGRATIONS = [`ALTER TABLE pt_attempts ADD COLUMN speaking_seconds REAL NOT NULL DEFAULT 0`];
 
 export interface AttemptStats {
   id: string;
@@ -36,6 +40,8 @@ export interface AttemptStats {
   endedAt?: string;
   turns: number;
   userWords: number;
+  /** Seconds of learner voice sent to the model. */
+  speakingSeconds?: number;
   score?: number;
   passed?: boolean;
   criteria?: Record<string, number>;
@@ -49,6 +55,7 @@ export interface UserSummary {
   averageScore: number | null;
   totalTurns: number;
   totalWords: number;
+  totalSpeakingSeconds: number;
   streakDays: number;
   byLanguage: Record<string, { attempts: number; averageScore: number | null }>;
   byExperience: Record<string, { attempts: number; bestScore: number | null; passed: boolean }>;
@@ -61,6 +68,7 @@ export class StatsStore {
   migrate(): Promise<void> {
     this.ready ??= (async () => {
       for (const s of STATS_SCHEMA) await this.db.run(s);
+      for (const s of STATS_MIGRATIONS) await this.db.run(s).catch(() => {});
     })();
     return this.ready;
   }
@@ -68,8 +76,8 @@ export class StatsStore {
   async save(a: AttemptStats): Promise<void> {
     await this.migrate();
     await this.db.run(
-      `INSERT OR REPLACE INTO pt_attempts (id,user_id,experience_id,language,started_at,ended_at,turns,user_words,score,passed,criteria_json)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO pt_attempts (id,user_id,experience_id,language,started_at,ended_at,turns,user_words,score,passed,criteria_json,speaking_seconds)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         a.id,
         a.userId,
@@ -82,6 +90,7 @@ export class StatsStore {
         a.score ?? null,
         a.passed === undefined ? null : a.passed ? 1 : 0,
         a.criteria ? JSON.stringify(a.criteria) : null,
+        a.speakingSeconds ?? 0,
       ],
     );
   }
@@ -98,6 +107,7 @@ export class StatsStore {
       endedAt: r.ended_at == null ? undefined : String(r.ended_at),
       turns: Number(r.turns),
       userWords: Number(r.user_words),
+      speakingSeconds: Number(r.speaking_seconds ?? 0),
       score: r.score == null ? undefined : Number(r.score),
       passed: r.passed == null ? undefined : Number(r.passed) === 1,
       criteria: r.criteria_json ? JSON.parse(String(r.criteria_json)) : undefined,
@@ -128,6 +138,7 @@ export class StatsStore {
       averageScore: avg(done.map((a) => a.score!)),
       totalTurns: list.reduce((s, a) => s + a.turns, 0),
       totalWords: list.reduce((s, a) => s + a.userWords, 0),
+      totalSpeakingSeconds: Math.round(list.reduce((s, a) => s + (a.speakingSeconds ?? 0), 0) * 10) / 10,
       streakDays: streak(list.map((a) => a.startedAt), today),
       byLanguage,
       byExperience,
@@ -149,7 +160,7 @@ export function streak(isoDates: string[], today = new Date()): number {
 /** In-memory driver for tests and demos (supports only what StatsStore uses). */
 export function memoryDriver(): SqlDriver {
   const rows = new Map<string, Row>();
-  const cols = ["id", "user_id", "experience_id", "language", "started_at", "ended_at", "turns", "user_words", "score", "passed", "criteria_json"];
+  const cols = ["id", "user_id", "experience_id", "language", "started_at", "ended_at", "turns", "user_words", "score", "passed", "criteria_json", "speaking_seconds"];
   return {
     async run(sql, params = []) {
       if (/^\s*INSERT/i.test(sql)) rows.set(String(params[0]), Object.fromEntries(cols.map((c, i) => [c, params[i]])));

@@ -1,6 +1,6 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { parseExperience, type Experience, type ExperienceInput } from "./experience.js";
-import { buildConversationGraph, type EvaluationResult } from "./graph.js";
+import { buildConversationGraph, isAudio, type EvaluationResult, type UserInput } from "./graph.js";
 import { createLLM, messageText, type LLMConfig } from "./llm.js";
 import { StatsStore, type AttemptStats, type SqlDriver, type UserSummary } from "./stats.js";
 import type { SpeechAudio, TTSProvider } from "./tts.js";
@@ -32,6 +32,7 @@ export interface Session {
   startedAt: string;
   turns: number;
   userWords: number;
+  speakingSeconds: number;
   finished: boolean;
   evaluation?: EvaluationResult;
   /** @internal true while a turn is running */
@@ -64,21 +65,28 @@ export class PatoTalk {
   async start(input: Experience | ExperienceInput | string, opts: { userId: string; speak?: boolean }): Promise<{ session: Session; opening: Turn }> {
     const experience = parseExperience(input);
     const graph = buildConversationGraph({ experience, llm: await this.llm, evaluator: await this.evaluator });
-    const session: Session = { id: uid(), userId: opts.userId, experience, startedAt: new Date().toISOString(), turns: 0, userWords: 0, finished: false, graph };
+    const session: Session = { id: uid(), userId: opts.userId, experience, startedAt: new Date().toISOString(), turns: 0, userWords: 0, speakingSeconds: 0, finished: false, graph };
     const state = await graph.invoke({ action: "start" }, this.cfg(session));
     await this.save(session);
     return { session, opening: await this.turn(session, state, opts.speak) };
   }
 
-  /** One learner turn: text in, character B's reply (and audio) out. Ends + evaluates at maxTurns. */
-  async say(session: Session, text: string, opts: { speak?: boolean } = {}): Promise<Turn> {
+  /**
+   * One learner turn. Pass recorded audio ({ audio: base64, mimeType, seconds }) and the
+   * multimodal model listens to it directly, no transcription. Text works too (typing fallback).
+   * Returns character B's reply (and its TTS audio). Ends + evaluates at maxTurns.
+   */
+  async say(session: Session, input: UserInput, opts: { speak?: boolean } = {}): Promise<Turn> {
     if (session.finished) throw new Error("Session already finished");
-    if (!text.trim()) throw new Error("Say something first");
+    const audio = isAudio(input);
+    if (audio ? !input.audio : !String(input ?? "").trim()) throw new Error("Say something first");
     if (session.busy) throw new Error("Still answering the previous message");
     session.busy = true;
     try {
-      const state = await session.graph.invoke({ action: "talk", input: text.trim() }, this.cfg(session));
-      session.userWords += countWords(text); // only counted once the turn succeeded
+      const state = await session.graph.invoke({ action: "talk", input: audio ? input : input.trim() }, this.cfg(session));
+      // only counted once the turn succeeded
+      if (audio) session.speakingSeconds += input.seconds ?? 0;
+      else session.userWords += countWords(input);
       return await this.turn(session, state, opts.speak);
     } finally {
       session.busy = false;
@@ -97,7 +105,10 @@ export class PatoTalk {
   /** Full message history of a session (kept in memory only). */
   async history(session: Session) {
     const snap = await session.graph.getState(this.cfg(session));
-    return (snap.values.messages ?? []).map((m: any) => ({ role: m.getType() === "human" ? "user" : "character", text: messageText(m) }));
+    return (snap.values.messages ?? []).map((m: any) => {
+      const voice = Array.isArray(m.content) && m.content.some((p: any) => p?.type === "audio");
+      return { role: m.getType() === "human" ? "user" : "character", text: voice ? "(voice)" : messageText(m), voice };
+    });
   }
 
   async summary(userId: string): Promise<UserSummary | null> {
@@ -147,6 +158,7 @@ export class PatoTalk {
       endedAt,
       turns: s.turns,
       userWords: s.userWords,
+      speakingSeconds: s.speakingSeconds,
       score: s.evaluation?.score,
       passed: s.evaluation?.passed,
       criteria: s.evaluation ? Object.fromEntries(s.evaluation.criteria.map((c) => [c.id, c.score])) : undefined,

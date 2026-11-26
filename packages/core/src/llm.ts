@@ -15,8 +15,8 @@ export type LLMConfig =
 
 export const DEFAULT_MODELS = {
   gemini: "gemini-3.5-flash-lite",
-  openai: "gpt-4o-mini",
-  ollama: "llama3.1",
+  openai: "gpt-4o-mini-audio-preview", // audio input; any audio-capable model works
+  ollama: "llama3.1", // text only: pick an audio-capable local model to speak
 } as const;
 
 /** Create the chat model. Providers are imported lazily so unused ones are never bundled/loaded. */

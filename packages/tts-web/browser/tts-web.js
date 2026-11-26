@@ -345,6 +345,100 @@ var SupertonicWebTTS = class {
   }
 };
 
+// src/recorder.ts
+import { encodeWav } from "@patotalk/core";
+var TARGET_RATE = 16e3;
+var VoiceRecorder = class {
+  constructor(opts = {}) {
+    this.opts = opts;
+  }
+  opts;
+  rec;
+  stream;
+  chunks = [];
+  startedAt = 0;
+  timer;
+  done;
+  static get supported() {
+    return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
+  }
+  get recording() {
+    return this.rec?.state === "recording";
+  }
+  async start() {
+    if (this.recording) return;
+    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    this.chunks = [];
+    const rec = new MediaRecorder(this.stream);
+    rec.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
+    rec.onstop = () => {
+      this.release();
+      this.done?.(this.chunks.length ? new Blob(this.chunks, { type: rec.mimeType }) : null);
+      this.done = void 0;
+    };
+    this.rec = rec;
+    rec.start();
+    this.startedAt = performance.now();
+    const max = this.opts.maxSeconds ?? 60;
+    this.timer = setTimeout(() => this.opts.onAutoStop?.(), max * 1e3);
+  }
+  /** Stop and return the recording, or null if it was too short to contain speech. */
+  async stop(minSeconds = 0.4) {
+    const rec = this.rec;
+    if (!rec || rec.state === "inactive") return null;
+    const blob = await new Promise((res) => {
+      this.done = res;
+      rec.stop();
+    });
+    this.rec = void 0;
+    if (!blob || (performance.now() - this.startedAt) / 1e3 < minSeconds) return null;
+    const samples = await decodeMono16k(await blob.arrayBuffer());
+    const seconds = samples.length / TARGET_RATE;
+    if (seconds < minSeconds || isSilent(samples)) return null;
+    const wav = encodeWav(samples, TARGET_RATE);
+    return { audio: toBase64(wav), mimeType: "audio/wav", seconds: Math.round(seconds * 10) / 10, url: URL.createObjectURL(new Blob([wav], { type: "audio/wav" })) };
+  }
+  /** Drop the current recording. */
+  cancel() {
+    this.done = void 0;
+    if (this.rec && this.rec.state !== "inactive") {
+      this.rec.onstop = () => this.release();
+      this.rec.stop();
+    }
+    this.rec = void 0;
+    this.release();
+  }
+  release() {
+    clearTimeout(this.timer);
+    this.stream?.getTracks().forEach((t) => t.stop());
+    this.stream = void 0;
+  }
+};
+async function decodeMono16k(buf) {
+  const ctx = new AudioContext();
+  try {
+    const decoded = await ctx.decodeAudioData(buf);
+    const len = Math.max(1, Math.ceil(decoded.duration * TARGET_RATE));
+    const off = new OfflineAudioContext(1, len, TARGET_RATE);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start();
+    return (await off.startRendering()).getChannelData(0);
+  } finally {
+    ctx.close();
+  }
+}
+function isSilent(s, threshold = 0.01) {
+  for (let i = 0; i < s.length; i++) if (Math.abs(s[i]) > threshold) return false;
+  return true;
+}
+function toBase64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 32768) bin += String.fromCharCode(...bytes.subarray(i, i + 32768));
+  return btoa(bin);
+}
+
 // src/index.ts
 var WebSpeechTTS = class {
   id = "web-speech";
@@ -429,6 +523,7 @@ export {
   KokoroWebTTS,
   SUPERTONIC_LANGUAGES,
   SupertonicWebTTS,
+  VoiceRecorder,
   WebSpeechTTS,
   cleanForSpeech,
   hasKanji,

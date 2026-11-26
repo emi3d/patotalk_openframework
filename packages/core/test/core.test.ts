@@ -111,3 +111,31 @@ test("a failed turn leaves no trace and can be retried; double sends are refused
   await assert.rejects(pt.say(session, "two"), /previous message/);
   await slow.catch(() => {});
 });
+
+test("audio turns go to the model as audio (no transcription), stats count seconds", async () => {
+  class Listening extends FakeListChatModel {
+    seen: any[][] = [];
+    async _generate(messages: any[], o?: any, r?: any) {
+      this.seen.push(messages);
+      return super._generate(messages, o, r);
+    }
+  }
+  const llm = new Listening({ responses: ["Sit down.", "Numbers, please.", evalJson] });
+  const driver = memoryDriver();
+  const pt = new PatoTalk({ llm, stats: driver });
+  const { session } = await pt.start(raise, { userId: "emi" });
+  const wav = Buffer.from(encodeWav(new Float32Array(1600), 16000)).toString("base64");
+  const t = await pt.say(session, { audio: wav, mimeType: "audio/wav", seconds: 2.5 });
+  assert.equal(t.text, "Numbers, please.");
+  const human = llm.seen[1].find((m: any) => m.getType() === "human");
+  assert.ok(Array.isArray(human.content) && human.content.some((p: any) => p.type === "audio" && p.data === wav), "model must receive the audio");
+  await assert.rejects(pt.say(session, { audio: "", mimeType: "audio/wav" }), /Say something/);
+  await pt.end(session);
+  const evalCall = llm.seen.at(-1)!;
+  assert.ok(JSON.stringify(evalCall.map((m: any) => m.content)).includes(wav), "evaluator hears the audio too");
+  const h = await pt.history(session);
+  assert.equal(h[1].text, "(voice)");
+  const s = await pt.summary("emi");
+  assert.equal(s?.totalSpeakingSeconds, 2.5);
+  assert.equal(s?.totalWords, 0);
+});

@@ -13,7 +13,7 @@ export function postgresDriver(pg: PgQueryable): SqlDriver {
     if (/INSERT OR REPLACE INTO pt_attempts/i.test(s))
       s =
         s.replace(/INSERT OR REPLACE/i, "INSERT") +
-        " ON CONFLICT (id) DO UPDATE SET ended_at=EXCLUDED.ended_at, turns=EXCLUDED.turns, user_words=EXCLUDED.user_words, score=EXCLUDED.score, passed=EXCLUDED.passed, criteria_json=EXCLUDED.criteria_json";
+        " ON CONFLICT (id) DO UPDATE SET ended_at=EXCLUDED.ended_at, turns=EXCLUDED.turns, user_words=EXCLUDED.user_words, score=EXCLUDED.score, passed=EXCLUDED.passed, criteria_json=EXCLUDED.criteria_json, speaking_seconds=EXCLUDED.speaking_seconds";
     return s;
   };
   return {

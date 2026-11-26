@@ -4,6 +4,7 @@ export { KokoroWebTTS, KOKORO_VOICES, type KokoroWebOptions } from "./kokoro.js"
 export { SupertonicWebTTS, SUPERTONIC_LANGUAGES, type SupertonicWebOptions } from "./supertonic.js";
 export { kanaToKokoro, toHiragana, hasKanji } from "./ja-kana.js";
 export { cleanForSpeech, serial } from "./util.js";
+export { VoiceRecorder, type RecordedVoice } from "./recorder.js";
 
 /** The browser's built-in voices (Web Speech API). Speaks directly; returns no samples. */
 export class WebSpeechTTS implements TTSProvider {
