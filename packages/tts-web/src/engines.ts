@@ -14,7 +14,7 @@ export class WebSpeechTTS implements TTSProvider {
       u.rate = opts.speed ?? 1;
       const v = speechSynthesis.getVoices().find((x) => x.lang.toLowerCase().startsWith(opts.lang.toLowerCase()));
       if (v) u.voice = v;
-      const done = setTimeout(resolve, 5000 + text.length * 200);
+      const done = setTimeout(resolve, 5000 + text.length * 200); // some browsers never fire onend
       u.onend = () => (clearTimeout(done), resolve());
       u.onerror = (e) => (clearTimeout(done), e.error === "interrupted" || e.error === "canceled" ? resolve() : reject(new Error(e.error)));
       speechSynthesis.speak(u);
@@ -31,7 +31,7 @@ export class AudioPlayer {
   private closed = false;
   async play(a: SpeechAudio): Promise<void> {
     this.stop();
-    if (this.closed || (!a.data && !a.samples?.length)) return;
+    if (this.closed || (!a.data && !a.samples?.length)) return; // a late clip after close() must stay silent
     this.ctx ??= new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {});
     if (!this.analyser) {

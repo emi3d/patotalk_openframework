@@ -40,7 +40,7 @@ export class SupertonicWebTTS implements TTSProvider {
       const eps = this.wasmOnly ? ["wasm"] : this.opts.executionProviders ?? ((navigator as any).gpu ? ["webgpu", "wasm"] : ["wasm"]);
       return new SupertonicEngine(ort, load).init({ executionProviders: eps });
     })();
-    this.engine.catch(() => (this.engine = undefined));
+    this.engine.catch(() => (this.engine = undefined)); // a failed download can be retried
     return this.engine;
   }
 
@@ -49,7 +49,7 @@ export class SupertonicWebTTS implements TTSProvider {
       try {
         return await this.run(text, opts);
       } catch {
-        this.engine = undefined;
+        this.engine = undefined; // broken session (e.g. WebGPU device lost): start fresh on WASM
         this.wasmOnly = true;
         return this.run(text, opts);
       }

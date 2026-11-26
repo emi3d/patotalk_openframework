@@ -85,7 +85,7 @@ async function decodeMono16k(buf: ArrayBuffer): Promise<Float32Array> {
     const len = Math.max(1, Math.ceil(decoded.duration * TARGET_RATE));
     const off = new OfflineAudioContext(1, len, TARGET_RATE);
     const src = off.createBufferSource();
-    src.buffer = decoded;
+    src.buffer = decoded; // multi-channel input is down-mixed to mono by the 1-channel destination
     src.connect(off.destination);
     src.start();
     return (await off.startRendering()).getChannelData(0);

@@ -8,7 +8,7 @@ export function Duck({ level, state }: { level: () => number; state: "idle" | "t
     const loop = (t: number) => {
       let l = level();
       if (!l && typeof speechSynthesis !== "undefined" && speechSynthesis.speaking) l = Math.sin(t / 55) > 0 ? 0.5 : 0;
-      if (l > 0.06) openUntil = t + 70;
+      if (l > 0.06) openUntil = t + 70; // hold briefly so the beak doesn't flicker
       if (mouth.current) mouth.current.style.opacity = t < openUntil ? "1" : "0";
       raf = requestAnimationFrame(loop);
     };
