@@ -678,9 +678,10 @@ var AudioPlayer = class {
   buf = new Float32Array(1024);
   startedAt = 0;
   duration = 0;
+  closed = false;
   async play(a) {
     this.stop();
-    if (!a.data && !a.samples?.length) return;
+    if (this.closed || !a.data && !a.samples?.length) return;
     this.ctx ??= new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {
     });
@@ -734,6 +735,7 @@ var AudioPlayer = class {
     if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   }
   close() {
+    this.closed = true;
     this.stop();
     this.ctx?.close().catch(() => {
     });

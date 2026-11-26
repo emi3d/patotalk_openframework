@@ -139,15 +139,9 @@ interface Line {
   who: "user" | "char";
   text: string;
   /** learner voice turn: playback URL + length */
-  voice?: { url: string; seconds: number; interrupted?: boolean };
+  voice?: { url: string; seconds: number };
 }
 
-/** Roughly the part of a line that was heard before playback stopped. */
-function heardPart(text: string, fraction: number): string {
-  const cut = text.slice(0, Math.round(text.length * fraction));
-  const space = cut.lastIndexOf(" ");
-  return fraction >= 1 ? text : space > cut.length * 0.6 ? cut.slice(0, space) : cut;
-}
 
 function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; onExit: () => void }) {
   const [lines, setLines] = useState<Line[]>([]);
@@ -162,21 +156,37 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   const player = useMemo(() => new AudioPlayer(), []);
   const fallback = useMemo(() => new WebSpeechTTS(), []);
   const speakId = useRef(0);
-  /** The character line being prepared or played, so talking over it can be reported as an interruption. */
-  const saying = useRef("");
+  const alive = useRef(true);
+  /** True while the character's line is being voiced: the mic waits for its turn (simple turn-taking, no interruptions). */
+  const [talking, setTalking] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lines, evaluation]);
-  useEffect(() => () => player.close(), [player]);
+  useEffect(
+    () => () => {
+      // leaving the scene: silence everything, including replies or voices still on their way
+      alive.current = false;
+      speakId.current++;
+      player.close();
+    },
+    [player],
+  );
+
+  /** Stop the character's voice, including a line still being prepared. */
+  const silence = () => {
+    speakId.current++;
+    player.stop();
+    setTalking(false);
+  };
 
   /** Speak a line. A newer line cancels an older one; voice errors fall back to browser voices and never block the chat. */
   const speak = async (text: string) => {
     const tts = ttsFor(settings);
-    if (!tts || !text) return;
+    if (!tts || !text || !alive.current) return;
     const id = ++speakId.current;
     player.stop();
-    saying.current = text;
+    setTalking(true);
     const v = exp.characterB.voice;
     const opts = { lang: exp.meta.language, gender: v?.gender, voice: v?.id };
     setVoiceStatus("Preparing voice…");
@@ -189,11 +199,11 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
       if (id !== speakId.current) return;
       setVoiceStatus(`Voice model failed (${(x as Error).message}). Using the browser voice for this line.`);
       try {
-        await fallback.synthesize(text, { lang: exp.meta.language });
+        if (alive.current) await fallback.synthesize(text, { lang: exp.meta.language });
       } catch {}
     } finally {
-      if (id === speakId.current) {
-        saying.current = "";
+      if (id === speakId.current && alive.current) {
+        setTalking(false);
         setVoiceStatus((s) => (s.startsWith("Voice model failed") ? s : ""));
       }
     }
@@ -236,18 +246,18 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   }, []);
 
   /** Send typed text or a recorded voice turn. Voice goes straight to the multimodal model: nothing is transcribed. */
-  const send = async (what: string | (RecordedVoice & { interrupted?: { heard: string } })) => {
+  const send = async (what: string | RecordedVoice) => {
     const voice = typeof what === "string" ? undefined : what;
     const text = typeof what === "string" ? what.trim() : "";
     if ((!voice && !text) || thinking || !sess.current || !eng.current) return;
     setErr("");
     if (!voice) setInput("");
-    player.stop();
-    speakId.current++;
-    setLines((l) => [...l, voice ? { who: "user", text: "", voice: { url: voice.url, seconds: voice.seconds, interrupted: !!voice.interrupted } } : { who: "user", text }]);
+    silence();
+    setLines((l) => [...l, voice ? { who: "user", text: "", voice: { url: voice.url, seconds: voice.seconds } } : { who: "user", text }]);
     setThinking(`${exp.characterB.name} is listening…`);
     try {
-      const t = await eng.current.say(sess.current, voice ? { audio: voice.audio, mimeType: voice.mimeType, seconds: voice.seconds, interrupted: voice.interrupted } : text, { speak: false });
+      const t = await eng.current.say(sess.current, voice ? { audio: voice.audio, mimeType: voice.mimeType, seconds: voice.seconds } : text, { speak: false });
+      if (!alive.current) return;
       setTurn(t.turn);
       setLines((l) => [...l, { who: "char", text: t.text }]);
       if (t.evaluation) setEvaluation(t.evaluation);
@@ -282,31 +292,23 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   const sendRef = useRef(send);
   sendRef.current = send;
   const [handsFree, setHandsFree] = useState(settings.handsFree && HandsFreeMic.supported);
-  const hf = useHandsFree(handsFree, {
-    paused: !ready || !!evaluation,
-    isCharacterSpeaking: () => player.playing || (typeof speechSynthesis !== "undefined" && speechSynthesis.speaking),
-    onSpeechStart: () => {
-      // Talking over the character: stop it, and remember how much of its line was heard.
-      const line = saying.current;
-      if (!line) return;
-      interruption.current = { heard: heardPart(line, player.progress()) };
-      saying.current = "";
-      speakId.current++;
-      player.stop();
-    },
+  const hidden = usePageHidden();
+  // Turn-taking: the mic only listens on the learner's turn, and is fully off while the tab is hidden.
+  const hf = useHandsFree(handsFree && !hidden && !evaluation, {
+    paused: !ready || talking,
     onUtterance: (v) => {
-      const interrupted = interruption.current;
-      interruption.current = undefined;
       setUnsent(null);
-      sendRef.current({ ...v, interrupted });
+      sendRef.current(v);
     },
     onError: (e) => {
       setErr(e);
       setHandsFree(false);
     },
   });
-  const interruption = useRef<{ heard: string } | undefined>(undefined);
-  const duckState = hf.hearing ? "hearing" : thinking ? "thinking" : voiceStatus === "" && saying.current ? "talking" : hf.on ? "listening" : "idle";
+  useEffect(() => {
+    if (hidden) silence();
+  }, [hidden]);
+  const duckState = hf.hearing ? "hearing" : thinking ? "thinking" : talking ? "talking" : hf.on ? "listening" : "idle";
   const mic = useMic((v) => {
     setUnsent(null);
     send(v);
@@ -358,8 +360,10 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
               ? "Listening to you…"
               : thinking
                 ? thinking
-                : hf.on
-                  ? `Hands-free: just talk${hf.detector ? ` (${hf.detector})` : ""}. Talk over ${exp.characterB.name} to interrupt.`
+                : talking
+                  ? voiceStatus || `${exp.characterB.name} is talking…`
+                  : hf.on
+                  ? `Your turn: just talk${hf.detector ? ` (${hf.detector})` : ""}.`
                   : hf.starting
                     ? "Starting the microphone…"
                     : ""}
@@ -371,7 +375,7 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
               {l.who === "char" && <small>{exp.characterB.name}</small>}
               {l.voice ? (
                 <span className="voice">
-                  🎤 {l.voice.seconds.toFixed(1)} s{l.voice.interrupted ? " ✋" : ""} <audio src={l.voice.url} controls preload="none" />
+                  🎤 {l.voice.seconds.toFixed(1)} s <audio src={l.voice.url} controls preload="none" />
                 </span>
               ) : (
                 <span>{l.text}</span>
@@ -485,10 +489,20 @@ function EvaluationCard({ ev, exp }: { ev: EvaluationResult; exp: Experience }) 
   );
 }
 
+function usePageHidden() {
+  const [hidden, setHidden] = useState(document.hidden);
+  useEffect(() => {
+    const on = () => setHidden(document.hidden);
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
+  return hidden;
+}
+
 /** Always-on mic with a tiny VAD (TEN VAD, ~280 KB WASM; loudness fallback). Each utterance goes to the model as audio. */
 function useHandsFree(
   enabled: boolean,
-  o: { paused: boolean; isCharacterSpeaking: () => boolean; onSpeechStart: () => void; onUtterance: (v: RecordedVoice) => void; onError: (e: string) => void },
+  o: { paused: boolean; onUtterance: (v: RecordedVoice) => void; onError: (e: string) => void },
 ) {
   const cb = useRef(o);
   cb.current = o;
@@ -509,11 +523,7 @@ function useHandsFree(
       if (dead) return det.destroy?.();
       const m = new HandsFreeMic({
         detector: det,
-        isCharacterSpeaking: () => cb.current.isCharacterSpeaking(),
-        onSpeechStart: () => {
-          setHearing(true);
-          cb.current.onSpeechStart();
-        },
+        onSpeechStart: () => setHearing(true),
         onUtterance: (v) => {
           setHearing(false);
           cb.current.onUtterance(v);
@@ -721,8 +731,8 @@ function SettingsView({ s, onChange }: { s: Settings; onChange: (s: Settings) =>
         <input type="checkbox" checked={s.autoplay} onChange={(e) => set("autoplay", e.target.checked)} /> Speak replies automatically
       </label>
       <label className="check">
-        <input type="checkbox" checked={s.handsFree} onChange={(e) => set("handsFree", e.target.checked)} /> Hands-free: always-on mic, talk over the character to
-        interrupt (TEN VAD, a ~280 KB voice detector)
+        <input type="checkbox" checked={s.handsFree} onChange={(e) => set("handsFree", e.target.checked)} /> Hands-free: the mic listens on your turn, after the character
+        finishes (TEN VAD, a ~280 KB voice detector)
       </label>
     </section>
   );

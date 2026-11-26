@@ -37,9 +37,10 @@ export class AudioPlayer {
   private buf = new Float32Array(1024);
   private startedAt = 0;
   private duration = 0;
+  private closed = false;
   async play(a: SpeechAudio): Promise<void> {
     this.stop();
-    if (!a.data && !a.samples?.length) return;
+    if (this.closed || (!a.data && !a.samples?.length)) return; // a late clip after close() must stay silent
     this.ctx ??= new AudioContext();
     if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {});
     if (!this.analyser) {
@@ -93,6 +94,7 @@ export class AudioPlayer {
     if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   }
   close() {
+    this.closed = true;
     this.stop();
     this.ctx?.close().catch(() => {});
     this.ctx = undefined;
