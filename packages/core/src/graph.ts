@@ -26,6 +26,8 @@ export const ConversationState = Annotation.Root({
   ...MessagesAnnotation.spec,
   /** "start" asks B for an opening line, "evaluate" ends the scene. Otherwise a user turn. */
   action: Annotation<"start" | "talk" | "evaluate">({ reducer: (_, b) => b, default: () => "talk" }),
+  /** The learner's line for this turn. Added to history together with B's reply, so a failed turn leaves no trace. */
+  input: Annotation<string>({ reducer: (_, b) => b, default: () => "" }),
   turns: Annotation<number>({ reducer: (_, b) => b, default: () => 0 }),
   evaluation: Annotation<EvaluationResult | null>({ reducer: (_, b) => b, default: () => null }),
 });
@@ -58,13 +60,14 @@ export function buildConversationGraph(opts: {
   const system = new SystemMessage(characterPrompt(exp));
 
   const character = async (s: ConversationStateType) => {
-    const history: BaseMessage[] = [system, ...s.messages];
-    if (s.action === "start") {
-      if (exp.characterB.opening) return { messages: [new AIMessage(exp.characterB.opening)] };
-      history.push(new HumanMessage("(The scene starts now. Say your first line to the learner, in character.)"));
-    }
-    const reply = await llm.invoke(history);
-    return { messages: [new AIMessage(messageText(reply).trim())], turns: s.action === "start" ? s.turns : s.turns + 1 };
+    const start = s.action === "start";
+    if (start && exp.characterB.opening) return { messages: [new AIMessage(exp.characterB.opening)] };
+    const user = start ? null : new HumanMessage(s.input);
+    const history: BaseMessage[] = [system, ...s.messages, user ?? new HumanMessage("(The scene starts now. Say your first line to the learner, in character.)")];
+    let text = "";
+    for (let i = 0; i < 2 && !text; i++) text = messageText(await llm.invoke(history)).trim(); // empty replies happen; retry once
+    if (!text) throw new Error("The language model returned an empty reply. Try again.");
+    return { messages: user ? [user, new AIMessage(text)] : [new AIMessage(text)], turns: start ? s.turns : s.turns + 1, input: "" };
   };
 
   const evaluate = async (s: ConversationStateType) => ({ evaluation: await evaluateConversation(exp, s.messages, evaluator) });

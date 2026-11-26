@@ -1,5 +1,6 @@
 import type { SpeakOptions, SpeechAudio, TTSProvider } from "@patotalk/core";
 import { hasKanji, kanaToKokoro } from "./ja-kana.js";
+import { cleanForSpeech, serial } from "./util.js";
 
 /** Kokoro voices per language (Kokoro-82M v1.0). */
 export const KOKORO_VOICES: Record<string, { female: string; male: string }> = {
@@ -37,6 +38,7 @@ export class KokoroWebTTS implements TTSProvider {
   readonly languages = Object.keys(KOKORO_VOICES);
   private tts?: Promise<any>;
   private espeak?: Promise<any>;
+  private queue = serial();
   constructor(private opts: KokoroWebOptions = {}) {}
 
   load(): Promise<any> {
@@ -49,6 +51,7 @@ export class KokoroWebTTS implements TTSProvider {
         progress_callback: this.opts.onProgress,
       });
     })();
+    this.tts.catch(() => (this.tts = undefined));
     return this.tts;
   }
 
@@ -57,20 +60,33 @@ export class KokoroWebTTS implements TTSProvider {
     const l = lang.toLowerCase();
     if (l === "en" || l.startsWith("en-")) return null; // kokoro-js handles English itself
     if (l.startsWith("ja")) {
-      const kana = hasKanji(text) && this.opts.reader ? await this.opts.reader(text) : text;
+      let kana = text;
+      if (hasKanji(text) && this.opts.reader) {
+        try {
+          kana = await this.opts.reader(text);
+        } catch {
+          kana = text; // reading failed: kanji are skipped, kana still spoken
+        }
+      }
       return kanaToKokoro(kana);
     }
     const ipa = this.opts.ipa ?? ((t: string, lg: string) => this.espeakIpa(t, lg));
     return ipa(text, l.split("-")[0]);
   }
 
-  async synthesize(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
+  synthesize(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
+    return this.queue(() => this.run(cleanForSpeech(text), opts));
+  }
+
+  private async run(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
+    if (!text) return { samples: new Float32Array(0), sampleRate: 24000 };
     const tts = await this.load();
     const lang = opts.lang.toLowerCase();
     const voices = KOKORO_VOICES[lang] ?? KOKORO_VOICES[lang.split("-")[0]];
     if (!voices) throw new Error(`Kokoro: no voice for language "${opts.lang}"`);
     const voice = opts.voice ?? (opts.gender === "male" ? voices.male : voices.female);
     const ph = await this.phonemes(text, lang);
+    if (ph !== null && !ph.trim()) return { samples: new Float32Array(0), sampleRate: 24000 };
     let audio: any;
     if (ph === null) audio = await tts.generate(text, { voice, speed: opts.speed ?? 1 });
     else {

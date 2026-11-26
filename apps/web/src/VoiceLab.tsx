@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { encodeWav, type TTSProvider } from "@patotalk/core";
-import { KokoroWebTTS, SupertonicWebTTS, playAudio } from "@patotalk/tts-web";
+import { AudioPlayer, KokoroWebTTS, SupertonicWebTTS } from "@patotalk/tts-web";
 
 const SAMPLES = [
   { lang: "ja", text: "味噌ラーメンが一番おいしいですよ。大盛りにしますか？", kana: "みそらーめんが いちばん おいしいですよ。おおもりに しますか？" },
@@ -30,7 +30,8 @@ export function VoiceLab() {
   const [busy, setBusy] = useState("");
   const [text, setText] = useState(SAMPLES[0].kana!);
   const [lang, setLang] = useState("ja");
-  const ctx = useRef<AudioContext | undefined>(undefined);
+  const player = useMemo(() => new AudioPlayer(), []);
+  useEffect(() => () => player.close(), [player]);
 
   const run = async (name: string, t: string, l: string, gender: "female" | "male") => {
     const key = `${name} · ${l} · ${gender}`;
@@ -42,8 +43,7 @@ export function VoiceLab() {
       const wav = encodeWav(a.samples!, a.sampleRate!);
       const url = URL.createObjectURL(new Blob([wav.slice().buffer], { type: "audio/wav" }));
       setRows((r) => [{ key, ms, sec: a.samples!.length / a.sampleRate!, url }, ...r]);
-      ctx.current ??= new AudioContext();
-      await playAudio(a, ctx.current);
+      await player.play(a);
     } catch (x) {
       setRows((r) => [{ key, ms: 0, sec: 0, url: "", err: (x as Error).message }, ...r]);
     } finally {

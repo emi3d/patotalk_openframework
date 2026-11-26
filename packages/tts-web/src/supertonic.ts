@@ -1,4 +1,5 @@
 import type { SpeakOptions, SpeechAudio, TTSProvider } from "@patotalk/core";
+import { cleanForSpeech, serial } from "./util.js";
 
 /** Supertonic 3 languages (31). It reads characters directly: no phonemizer needed, kanji included. */
 export const SUPERTONIC_LANGUAGES = [
@@ -28,6 +29,8 @@ export class SupertonicWebTTS implements TTSProvider {
   readonly id = "supertonic-web";
   readonly languages = SUPERTONIC_LANGUAGES;
   private engine?: Promise<any>;
+  private queue = serial();
+  private wasmOnly = false;
   constructor(private opts: SupertonicWebOptions = {}) {}
 
   load(): Promise<any> {
@@ -42,18 +45,35 @@ export class SupertonicWebTTS implements TTSProvider {
         if (!r.ok) throw new Error(`Supertonic: ${path} ${r.status}`);
         return new Uint8Array(await r.arrayBuffer());
       };
-      const eps = this.opts.executionProviders ?? ((navigator as any).gpu ? ["webgpu", "wasm"] : ["wasm"]);
+      const eps = this.wasmOnly ? ["wasm"] : this.opts.executionProviders ?? ((navigator as any).gpu ? ["webgpu", "wasm"] : ["wasm"]);
       return new SupertonicEngine(ort, load).init({ executionProviders: eps });
     })();
+    this.engine.catch(() => (this.engine = undefined)); // a failed download can be retried
     return this.engine;
   }
 
-  async synthesize(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
+  /** One synthesis at a time; on an engine error the engine is rebuilt and the text tried once more. */
+  synthesize(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
+    return this.queue(async () => {
+      try {
+        return await this.run(text, opts);
+      } catch {
+        this.engine = undefined; // broken session (e.g. WebGPU device lost): start fresh on WASM
+        this.wasmOnly = true;
+        return this.run(text, opts);
+      }
+    });
+  }
+
+  private async run(text: string, opts: SpeakOptions): Promise<SpeechAudio> {
     const engine = await this.load();
     const lang = opts.lang.toLowerCase().split("-")[0];
-    const voice = opts.voice ?? (opts.gender === "male" ? "M1" : "F1");
-    const r = await engine.synthesize(text, {
-      voice,
+    let clean = cleanForSpeech(text);
+    const bad: string[] = engine.unsupported(clean);
+    if (bad.length) clean = [...clean].filter((c) => !bad.includes(c)).join("");
+    if (!clean.trim()) return { samples: new Float32Array(0), sampleRate: 44100 };
+    const r = await engine.synthesize(clean, {
+      voice: opts.voice ?? (opts.gender === "male" ? "M1" : "F1"),
       lang: SUPERTONIC_LANGUAGES.includes(lang) ? lang : "na",
       steps: this.opts.steps ?? 8,
       speed: opts.speed ?? 1.05,

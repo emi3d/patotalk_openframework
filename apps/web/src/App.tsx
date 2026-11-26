@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseExperience, toJSON, toMarkdown, type EvaluationResult, type Experience, type Session, type UserSummary } from "@patotalk/core";
-import { playAudio } from "@patotalk/tts-web";
+import { AudioPlayer, WebSpeechTTS } from "@patotalk/tts-web";
 import {
   builtInExperiences,
   deleteMyExperience,
@@ -141,47 +141,77 @@ interface Line {
 
 function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; onExit: () => void }) {
   const [lines, setLines] = useState<Line[]>([]);
-  const [busy, setBusy] = useState("Starting…");
+  const [thinking, setThinking] = useState("Starting…"); // blocks sending
+  const [voiceStatus, setVoiceStatus] = useState(""); // never blocks sending
   const [input, setInput] = useState("");
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [err, setErr] = useState("");
   const [turn, setTurn] = useState(0);
   const eng = useRef<Awaited<ReturnType<typeof engineFor>> | undefined>(undefined);
   const sess = useRef<Session | undefined>(undefined);
-  const ctx = useMemo(() => new AudioContext(), []);
+  const player = useMemo(() => new AudioPlayer(), []);
+  const fallback = useMemo(() => new WebSpeechTTS(), []);
+  const speakId = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lines, evaluation]);
+  useEffect(() => () => player.close(), [player]);
 
+  /** Speak a line. A newer line cancels an older one; voice errors fall back to browser voices and never block the chat. */
   const speak = async (text: string) => {
     const tts = ttsFor(settings);
-    if (!tts || !settings.autoplay) return;
-    setBusy("Speaking…");
+    if (!tts || !text) return;
+    const id = ++speakId.current;
+    player.stop();
+    const v = exp.characterB.voice;
+    const opts = { lang: exp.meta.language, gender: v?.gender, voice: v?.id };
+    setVoiceStatus("Preparing voice…");
     try {
-      const v = exp.characterB.voice;
-      const a = await tts.synthesize(text, { lang: exp.meta.language, gender: v?.gender, voice: v?.id });
-      await playAudio(a, ctx);
+      const a = await tts.synthesize(text, opts);
+      if (id !== speakId.current) return; // a newer line started meanwhile
+      setVoiceStatus("");
+      await player.play(a);
     } catch (x) {
-      setErr(`Voice: ${(x as Error).message}`);
+      if (id !== speakId.current) return;
+      setVoiceStatus(`Voice model failed (${(x as Error).message}). Using the browser voice for this line.`);
+      try {
+        await fallback.synthesize(text, { lang: exp.meta.language });
+      } catch {}
+    } finally {
+      if (id === speakId.current) setVoiceStatus((s) => (s.startsWith("Voice model failed") ? s : ""));
     }
   };
 
   useEffect(() => {
     let dead = false;
     (async () => {
+      if (settings.llm !== "ollama" && !settings.apiKey) {
+        setErr("Add your API key in Settings first.");
+        setThinking("");
+        return;
+      }
+      // Start downloading the voice model while the character thinks of its first line.
+      const tts = ttsFor(settings) as { load?: () => Promise<unknown> } | undefined;
+      if (tts?.load) {
+        setVoiceStatus("Loading voice model (first time downloads a few hundred MB)…");
+        tts.load().then(
+          () => !dead && setVoiceStatus(""),
+          (x) => !dead && setVoiceStatus(`Voice model could not load: ${(x as Error).message}. Browser voice will be used.`),
+        );
+      }
       try {
         eng.current = await engineFor(settings);
         const { session, opening } = await eng.current.start(exp, { userId: settings.userId, speak: false });
         if (dead) return;
         sess.current = session;
         setLines([{ who: "char", text: opening.text }]);
-        setBusy("");
-        await speak(opening.text);
+        setThinking("");
+        if (settings.autoplay) speak(opening.text);
       } catch (x) {
-        setErr((x as Error).message);
+        if (!dead) setErr(friendly(x));
       } finally {
-        if (!dead) setBusy("");
+        if (!dead) setThinking("");
       }
     })();
     return () => {
@@ -190,37 +220,46 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   }, []);
 
   const send = async (text: string) => {
-    if (!text.trim() || !sess.current || !eng.current) return;
+    text = text.trim();
+    if (!text || thinking || !sess.current || !eng.current) return;
+    setErr("");
     setInput("");
+    player.stop();
+    speakId.current++;
     setLines((l) => [...l, { who: "user", text }]);
-    setBusy(`${exp.characterB.name} is thinking…`);
+    setThinking(`${exp.characterB.name} is thinking…`);
     try {
       const t = await eng.current.say(sess.current, text, { speak: false });
       setTurn(t.turn);
       setLines((l) => [...l, { who: "char", text: t.text }]);
       if (t.evaluation) setEvaluation(t.evaluation);
-      setBusy("");
-      await speak(t.text);
+      setThinking("");
+      if (settings.autoplay) speak(t.text);
     } catch (x) {
-      setErr((x as Error).message);
+      // The turn was not stored: take the bubble back and give the text back to retry.
+      setLines((l) => l.slice(0, -1));
+      setInput(text);
+      setErr(friendly(x));
     } finally {
-      setBusy("");
+      setThinking("");
     }
   };
 
   const end = async () => {
-    if (!sess.current || !eng.current) return;
-    setBusy("Evaluating…");
+    if (!sess.current || !eng.current || thinking) return;
+    setErr("");
+    setThinking("Evaluating…");
     try {
       setEvaluation(await eng.current.end(sess.current));
     } catch (x) {
-      setErr((x as Error).message);
+      setErr(`${friendly(x)} You can press "End & evaluate" again.`);
     } finally {
-      setBusy("");
+      setThinking("");
     }
   };
 
-  const mic = useMic(exp.meta.language, (t) => setInput(t));
+  const mic = useMic(exp.meta.language, (t) => setInput(t), (e) => setErr(e));
+  const ready = !!sess.current && !thinking;
 
   return (
     <section className="play">
@@ -265,7 +304,7 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
             <div key={i} className={`bubble ${l.who}`}>
               {l.who === "char" && <small>{exp.characterB.name}</small>}
               <span>{l.text}</span>
-              {l.who === "char" && (
+              {l.who === "char" && ttsFor(settings) && (
                 <button className="replay" title="Play again" onClick={() => speak(l.text)}>
                   🔊
                 </button>
@@ -276,7 +315,8 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
           <div ref={endRef} />
         </div>
         {err && <p className="error">{err}</p>}
-        {busy && <p className="muted">{busy}</p>}
+        {thinking && <p className="muted">{thinking}</p>}
+        {voiceStatus && <p className="muted">{voiceStatus}</p>}
         {!evaluation && (
           <form
             className="composer"
@@ -286,15 +326,15 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
             }}
           >
             {mic.supported && (
-              <button type="button" className={mic.on ? "rec" : ""} onClick={mic.toggle} title="Speak">
+              <button type="button" className={mic.on ? "rec" : ""} onClick={mic.toggle} title="Speak" disabled={!ready}>
                 🎤
               </button>
             )}
-            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Answer ${exp.characterB.name}…`} disabled={!!busy && !busy.startsWith("Speaking")} />
-            <button className="primary" disabled={!input.trim()}>
+            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Answer ${exp.characterB.name}…`} />
+            <button className="primary" disabled={!ready || !input.trim()}>
               Send
             </button>
-            <button type="button" onClick={end} disabled={lines.length < 3}>
+            <button type="button" onClick={end} disabled={!ready || lines.length < 3}>
               End & evaluate
             </button>
           </form>
@@ -302,6 +342,16 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
       </div>
     </section>
   );
+}
+
+/** Error text a learner can act on. */
+function friendly(x: unknown): string {
+  const m = String((x as Error)?.message ?? x);
+  if (/API key|401|403|PERMISSION|API_KEY/i.test(m)) return "The API key was rejected. Check it in Settings.";
+  if (/429|quota|RESOURCE_EXHAUSTED/i.test(m)) return "The model is rate-limited right now. Wait a few seconds and send again.";
+  if (/503|overloaded|UNAVAILABLE/i.test(m)) return "The model is busy right now. Send again in a moment.";
+  if (/Failed to fetch|NetworkError|network/i.test(m)) return "No connection to the model. Check your internet (or that the local server is running) and send again.";
+  return m;
 }
 
 function EvaluationCard({ ev, exp }: { ev: EvaluationResult; exp: Experience }) {
@@ -340,7 +390,7 @@ function EvaluationCard({ ev, exp }: { ev: EvaluationResult; exp: Experience }) 
   );
 }
 
-function useMic(lang: string, onText: (t: string) => void) {
+function useMic(lang: string, onText: (t: string) => void, onError: (e: string) => void) {
   const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
   const [on, setOn] = useState(false);
   const rec = useRef<any>(null);
@@ -351,9 +401,17 @@ function useMic(lang: string, onText: (t: string) => void) {
     r.interimResults = true;
     r.onresult = (e: any) => onText(Array.from(e.results as ArrayLike<any>).map((x) => x[0].transcript).join(""));
     r.onend = () => setOn(false);
+    r.onerror = (e: any) => {
+      setOn(false);
+      onError(e.error === "not-allowed" ? "Microphone blocked. Allow it in the browser, or type instead." : `Microphone: ${e.error}`);
+    };
     rec.current = r;
-    r.start();
-    setOn(true);
+    try {
+      r.start();
+      setOn(true);
+    } catch (e) {
+      onError(`Microphone: ${(e as Error).message}`);
+    }
   };
   return { supported: !!SR, on, toggle };
 }

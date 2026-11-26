@@ -88,3 +88,26 @@ test("helpers", () => {
   const wav = encodeWav(new Float32Array([0, 0.5, -0.5]), 24000);
   assert.equal(wav.length, 44 + 6);
 });
+
+test("a failed turn leaves no trace and can be retried; double sends are refused", async () => {
+  let calls = 0;
+  const replies = ["Hello.", "FAIL", "Numbers?"];
+  const llm = {
+    async invoke() {
+      const r = replies[calls++];
+      if (r === "FAIL") throw new Error("503 overloaded");
+      return { content: r };
+    },
+  } as any;
+  const pt = new PatoTalk({ llm, stats: memoryDriver() });
+  const { session } = await pt.start(raise, { userId: "u" });
+  await assert.rejects(pt.say(session, "I want a raise."), /503/);
+  assert.equal(session.userWords, 0);
+  assert.equal((await pt.history(session)).length, 1, "failed turn must not be stored");
+  const t = await pt.say(session, "I want a raise.");
+  assert.equal(t.text, "Numbers?");
+  assert.equal((await pt.history(session)).length, 3);
+  const slow = pt.say(session, "one");
+  await assert.rejects(pt.say(session, "two"), /previous message/);
+  await slow.catch(() => {});
+});

@@ -28,6 +28,7 @@ export async function createLLM(cfg: LLMConfig): Promise<BaseChatModel> {
         apiKey: cfg.apiKey,
         model: cfg.model ?? DEFAULT_MODELS.gemini,
         temperature: cfg.temperature ?? 0.8,
+        maxRetries: 2, // fail fast enough for a live chat; the UI lets the learner resend
       }) as unknown as BaseChatModel;
     }
     case "openai": {
@@ -37,6 +38,7 @@ export async function createLLM(cfg: LLMConfig): Promise<BaseChatModel> {
         apiKey: cfg.apiKey ?? "not-needed",
         model: cfg.model ?? DEFAULT_MODELS.openai,
         temperature: cfg.temperature ?? 0.8,
+        maxRetries: 2, // fail fast enough for a live chat; the UI lets the learner resend
         configuration: cfg.baseUrl ? { baseURL: cfg.baseUrl, dangerouslyAllowBrowser: true } : { dangerouslyAllowBrowser: true },
       }) as unknown as BaseChatModel;
     }
@@ -46,6 +48,7 @@ export async function createLLM(cfg: LLMConfig): Promise<BaseChatModel> {
         model: cfg.model ?? DEFAULT_MODELS.ollama,
         baseUrl: cfg.baseUrl ?? "http://localhost:11434",
         temperature: cfg.temperature ?? 0.8,
+        maxRetries: 2, // fail fast enough for a live chat; the UI lets the learner resend
       }) as unknown as BaseChatModel;
     }
     case "stub":

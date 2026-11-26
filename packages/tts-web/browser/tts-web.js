@@ -131,6 +131,20 @@ function kanaToKokoro(text) {
 }
 var hasKanji = (s) => /\p{Script=Han}/u.test(s);
 
+// src/util.ts
+function serial() {
+  let tail = Promise.resolve();
+  return (job) => {
+    const run = tail.then(job, job);
+    tail = run.catch(() => {
+    });
+    return run;
+  };
+}
+function cleanForSpeech(text) {
+  return text.replace(/https?:\/\/\S+/g, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*[^*\n]{1,80}\*/g, "").replace(/[*_`#>~|]+/g, "").replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "").replace(/\s+/g, " ").trim();
+}
+
 // src/kokoro.ts
 var KOKORO_VOICES = {
   en: { female: "af_heart", male: "am_michael" },
@@ -154,6 +168,7 @@ var KokoroWebTTS = class {
   languages = Object.keys(KOKORO_VOICES);
   tts;
   espeak;
+  queue = serial();
   load() {
     this.tts ??= (async () => {
       const { KokoroTTS } = await import(
@@ -167,6 +182,7 @@ var KokoroWebTTS = class {
         progress_callback: this.opts.onProgress
       });
     })();
+    this.tts.catch(() => this.tts = void 0);
     return this.tts;
   }
   /** The phoneme string Kokoro is given (exposed for debugging and tests). */
@@ -174,19 +190,31 @@ var KokoroWebTTS = class {
     const l = lang.toLowerCase();
     if (l === "en" || l.startsWith("en-")) return null;
     if (l.startsWith("ja")) {
-      const kana = hasKanji(text) && this.opts.reader ? await this.opts.reader(text) : text;
+      let kana = text;
+      if (hasKanji(text) && this.opts.reader) {
+        try {
+          kana = await this.opts.reader(text);
+        } catch {
+          kana = text;
+        }
+      }
       return kanaToKokoro(kana);
     }
     const ipa = this.opts.ipa ?? ((t, lg) => this.espeakIpa(t, lg));
     return ipa(text, l.split("-")[0]);
   }
-  async synthesize(text, opts) {
+  synthesize(text, opts) {
+    return this.queue(() => this.run(cleanForSpeech(text), opts));
+  }
+  async run(text, opts) {
+    if (!text) return { samples: new Float32Array(0), sampleRate: 24e3 };
     const tts = await this.load();
     const lang = opts.lang.toLowerCase();
     const voices = KOKORO_VOICES[lang] ?? KOKORO_VOICES[lang.split("-")[0]];
     if (!voices) throw new Error(`Kokoro: no voice for language "${opts.lang}"`);
     const voice = opts.voice ?? (opts.gender === "male" ? voices.male : voices.female);
     const ph = await this.phonemes(text, lang);
+    if (ph !== null && !ph.trim()) return { samples: new Float32Array(0), sampleRate: 24e3 };
     let audio;
     if (ph === null) audio = await tts.generate(text, { voice, speed: opts.speed ?? 1 });
     else {
@@ -262,6 +290,8 @@ var SupertonicWebTTS = class {
   id = "supertonic-web";
   languages = SUPERTONIC_LANGUAGES;
   engine;
+  queue = serial();
+  wasmOnly = false;
   load() {
     this.engine ??= (async () => {
       const ort = await import(
@@ -280,17 +310,33 @@ var SupertonicWebTTS = class {
         if (!r.ok) throw new Error(`Supertonic: ${path} ${r.status}`);
         return new Uint8Array(await r.arrayBuffer());
       };
-      const eps = this.opts.executionProviders ?? (navigator.gpu ? ["webgpu", "wasm"] : ["wasm"]);
+      const eps = this.wasmOnly ? ["wasm"] : this.opts.executionProviders ?? (navigator.gpu ? ["webgpu", "wasm"] : ["wasm"]);
       return new SupertonicEngine(ort, load).init({ executionProviders: eps });
     })();
+    this.engine.catch(() => this.engine = void 0);
     return this.engine;
   }
-  async synthesize(text, opts) {
+  /** One synthesis at a time; on an engine error the engine is rebuilt and the text tried once more. */
+  synthesize(text, opts) {
+    return this.queue(async () => {
+      try {
+        return await this.run(text, opts);
+      } catch {
+        this.engine = void 0;
+        this.wasmOnly = true;
+        return this.run(text, opts);
+      }
+    });
+  }
+  async run(text, opts) {
     const engine = await this.load();
     const lang = opts.lang.toLowerCase().split("-")[0];
-    const voice = opts.voice ?? (opts.gender === "male" ? "M1" : "F1");
-    const r = await engine.synthesize(text, {
-      voice,
+    let clean = cleanForSpeech(text);
+    const bad = engine.unsupported(clean);
+    if (bad.length) clean = [...clean].filter((c) => !bad.includes(c)).join("");
+    if (!clean.trim()) return { samples: new Float32Array(0), sampleRate: 44100 };
+    const r = await engine.synthesize(clean, {
+      voice: opts.voice ?? (opts.gender === "male" ? "M1" : "F1"),
       lang: SUPERTONIC_LANGUAGES.includes(lang) ? lang : "na",
       steps: this.opts.steps ?? 8,
       speed: opts.speed ?? 1.05
@@ -309,11 +355,53 @@ var WebSpeechTTS = class {
       u.rate = opts.speed ?? 1;
       const v = speechSynthesis.getVoices().find((x) => x.lang.toLowerCase().startsWith(opts.lang.toLowerCase()));
       if (v) u.voice = v;
-      u.onend = () => resolve();
-      u.onerror = (e) => reject(new Error(e.error));
+      const done = setTimeout(resolve, 5e3 + text.length * 200);
+      u.onend = () => (clearTimeout(done), resolve());
+      u.onerror = (e) => (clearTimeout(done), e.error === "interrupted" || e.error === "canceled" ? resolve() : reject(new Error(e.error)));
       speechSynthesis.speak(u);
     });
     return { samples: new Float32Array(0), sampleRate: 24e3 };
+  }
+};
+var AudioPlayer = class {
+  ctx;
+  current;
+  async play(a) {
+    this.stop();
+    if (!a.data && !a.samples?.length) return;
+    this.ctx ??= new AudioContext();
+    if (this.ctx.state === "suspended") await this.ctx.resume().catch(() => {
+    });
+    const buf = a.data ? await this.ctx.decodeAudioData(a.data.slice().buffer) : (() => {
+      const b = this.ctx.createBuffer(1, a.samples.length, a.sampleRate ?? 24e3);
+      b.copyToChannel(a.samples, 0);
+      return b;
+    })();
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(this.ctx.destination);
+    this.current = src;
+    return new Promise((resolve) => {
+      src.onended = () => {
+        if (this.current === src) this.current = void 0;
+        resolve();
+      };
+      src.start();
+    });
+  }
+  stop() {
+    try {
+      this.current?.stop();
+    } catch {
+    }
+    this.current = void 0;
+    if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+  }
+  close() {
+    this.stop();
+    this.ctx?.close().catch(() => {
+    });
+    this.ctx = void 0;
   }
 };
 async function playAudio(a, ctx = new AudioContext()) {
@@ -336,13 +424,16 @@ function playBuffer(ctx, buf) {
   });
 }
 export {
+  AudioPlayer,
   KOKORO_VOICES,
   KokoroWebTTS,
   SUPERTONIC_LANGUAGES,
   SupertonicWebTTS,
   WebSpeechTTS,
+  cleanForSpeech,
   hasKanji,
   kanaToKokoro,
   playAudio,
+  serial,
   toHiragana
 };

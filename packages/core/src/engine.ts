@@ -1,5 +1,4 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { HumanMessage } from "@langchain/core/messages";
 import { parseExperience, type Experience, type ExperienceInput } from "./experience.js";
 import { buildConversationGraph, type EvaluationResult } from "./graph.js";
 import { createLLM, messageText, type LLMConfig } from "./llm.js";
@@ -35,6 +34,8 @@ export interface Session {
   userWords: number;
   finished: boolean;
   evaluation?: EvaluationResult;
+  /** @internal true while a turn is running */
+  busy?: boolean;
   /** @internal */
   graph: ReturnType<typeof buildConversationGraph>;
 }
@@ -72,14 +73,22 @@ export class PatoTalk {
   /** One learner turn: text in, character B's reply (and audio) out. Ends + evaluates at maxTurns. */
   async say(session: Session, text: string, opts: { speak?: boolean } = {}): Promise<Turn> {
     if (session.finished) throw new Error("Session already finished");
-    session.userWords += countWords(text);
-    const state = await session.graph.invoke({ action: "talk", messages: [new HumanMessage(text)] }, this.cfg(session));
-    return this.turn(session, state, opts.speak);
+    if (!text.trim()) throw new Error("Say something first");
+    if (session.busy) throw new Error("Still answering the previous message");
+    session.busy = true;
+    try {
+      const state = await session.graph.invoke({ action: "talk", input: text.trim() }, this.cfg(session));
+      session.userWords += countWords(text); // only counted once the turn succeeded
+      return await this.turn(session, state, opts.speak);
+    } finally {
+      session.busy = false;
+    }
   }
 
   /** End the scene now and evaluate it. */
   async end(session: Session): Promise<EvaluationResult> {
     if (session.evaluation) return session.evaluation;
+    if (session.busy) throw new Error("Still answering the previous message");
     const state = await session.graph.invoke({ action: "evaluate" }, this.cfg(session));
     await this.finish(session, state.evaluation!);
     return state.evaluation!;
