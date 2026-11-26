@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { parseExperience, toJSON, toMarkdown, type EvaluationResult, type Experience, type Session, type UserSummary } from "@patotalk/core";
+import { llmProvider, llmProviders, parseExperience, toJSON, toMarkdown, ttsProvider, ttsProviders, type ProviderField, type ProviderOptions, type EvaluationResult, type Experience, type Session, type UserSummary } from "@patotalk/core";
 import { AudioPlayer, EnergyDetector, HandsFreeMic, TenVadDetector, VoiceRecorder, WebSpeechTTS, type RecordedVoice, type VoiceDetector } from "@patotalk/tts-web";
 import { Duck } from "./Duck";
 import {
@@ -7,6 +7,7 @@ import {
   deleteMyExperience,
   download,
   engineFor,
+  llmMissing,
   loadSettings,
   myExperiences,
   saveMyExperience,
@@ -22,7 +23,7 @@ type View = { name: "library" } | { name: "play"; exp: Experience } | { name: "e
 
 export function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [view, setView] = useState<View>(settings.apiKey || settings.llm === "ollama" ? { name: "library" } : { name: "settings" });
+  const [view, setView] = useState<View>(llmMissing(settings).length ? { name: "settings" } : { name: "library" });
   const update = (s: Settings) => {
     setSettings(s);
     saveSettings(s);
@@ -207,8 +208,9 @@ function Play({ exp, settings, onExit }: { exp: Experience; settings: Settings; 
   useEffect(() => {
     let dead = false;
     (async () => {
-      if (settings.llm !== "ollama" && !settings.apiKey) {
-        setErr("Add your API key in Settings first.");
+      const missing = llmMissing(settings);
+      if (missing.length) {
+        setErr(`Fill in ${missing.join(", ")} for the language provider in Settings first.`);
         setThinking("");
         return;
       }
@@ -658,8 +660,29 @@ function Stats({ userId }: { userId: string }) {
   );
 }
 
+function ProviderFields({ fields, values, onChange }: { fields: ProviderField[]; values: ProviderOptions; onChange: (v: ProviderOptions) => void }) {
+  return (
+    <>
+      {fields.map((f) => (
+        <label key={f.key}>
+          {f.label}
+          {f.required ? "" : " (optional)"}
+          <input
+            type={f.secret ? "password" : "text"}
+            value={values[f.key] ?? ""}
+            placeholder={f.placeholder}
+            onChange={(e) => onChange({ ...values, [f.key]: e.target.value })}
+          />
+        </label>
+      ))}
+    </>
+  );
+}
+
 function SettingsView({ s, onChange }: { s: Settings; onChange: (s: Settings) => void }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...s, [k]: v });
+  const llm = llmProvider(s.llm);
+  const tts = ttsProvider(s.tts);
   return (
     <section className="form">
       <h2>Settings</h2>
@@ -670,51 +693,33 @@ function SettingsView({ s, onChange }: { s: Settings; onChange: (s: Settings) =>
       </label>
       <h3>Language provider</h3>
       <p className="muted">
-        The model listens to your voice directly, so it must accept audio input. Gemini models do. With OpenAI-compatible servers pick an audio model
-        (for example gpt-4o-mini-audio-preview). Text-only models still work if you type.
+        The model listens to your voice directly, so it must accept audio input. Text-only models still work if you type. Apps can add any provider with
+        registerLLMProvider().
       </p>
       <label>
         Provider
-        <select value={s.llm} onChange={(e) => set("llm", e.target.value as Settings["llm"])}>
-          <option value="gemini">Gemini (cloud)</option>
-          <option value="openai">OpenAI-compatible (cloud or local: LM Studio, vLLM, llama.cpp…)</option>
-          <option value="ollama">Ollama (local)</option>
+        <select value={s.llm} onChange={(e) => set("llm", e.target.value)}>
+          {llmProviders().map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
         </select>
       </label>
-      {s.llm !== "ollama" && (
-        <label>
-          API key
-          <input type="password" value={s.apiKey} onChange={(e) => set("apiKey", e.target.value)} placeholder={s.llm === "gemini" ? "From aistudio.google.com/apikey" : ""} />
-        </label>
-      )}
-      <label>
-        Model (blank = default)
-        <input value={s.model} onChange={(e) => set("model", e.target.value)} placeholder={s.llm === "gemini" ? "gemini-3.5-flash-lite" : s.llm === "openai" ? "gpt-4o-mini-audio-preview" : "an audio-capable model"} />
-      </label>
-      {s.llm !== "gemini" && (
-        <label>
-          Base URL
-          <input value={s.baseUrl} onChange={(e) => set("baseUrl", e.target.value)} placeholder={s.llm === "ollama" ? "http://localhost:11434" : "https://api.openai.com/v1"} />
-        </label>
-      )}
+      {llm && <ProviderFields fields={llm.fields} values={s.llmOptions[s.llm] ?? {}} onChange={(v) => set("llmOptions", { ...s.llmOptions, [s.llm]: v })} />}
       <h3>Voice provider</h3>
       <label>
         Voice
-        <select value={s.tts} onChange={(e) => set("tts", e.target.value as Settings["tts"])}>
-          <option value="supertonic">Supertonic 3 (local, in browser, 31 languages)</option>
-          <option value="kokoro">Kokoro-82M (local, in browser)</option>
-          <option value="web-speech">Browser voices (Web Speech)</option>
-          <option value="gemini-tts">Gemini TTS (cloud, uses the Gemini key)</option>
-          <option value="openai-speech">OpenAI-compatible speech server (e.g. Kokoro-FastAPI)</option>
+        <select value={s.tts} onChange={(e) => set("tts", e.target.value)}>
+          {ttsProviders().map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
           <option value="none">No voice</option>
         </select>
       </label>
-      {s.tts === "openai-speech" && (
-        <label>
-          Speech server URL
-          <input value={s.ttsUrl} onChange={(e) => set("ttsUrl", e.target.value)} />
-        </label>
-      )}
+      {tts && <ProviderFields fields={tts.fields} values={s.ttsOptions[s.tts] ?? {}} onChange={(v) => set("ttsOptions", { ...s.ttsOptions, [s.tts]: v })} />}
       <label className="check">
         <input type="checkbox" checked={s.autoplay} onChange={(e) => set("autoplay", e.target.checked)} /> Speak replies automatically
       </label>

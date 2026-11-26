@@ -1,4 +1,5 @@
 export * from "./experience.js";
+export * from "./providers.js";
 export * from "./llm.js";
 export * from "./tts.js";
 export * from "./stats.js";

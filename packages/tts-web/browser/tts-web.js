@@ -208,9 +208,9 @@ var KokoroWebTTS = class {
     if (!text) return { samples: new Float32Array(0), sampleRate: 24e3 };
     const tts = await this.load();
     const lang = opts.lang.toLowerCase();
-    const voices = KOKORO_VOICES[lang] ?? KOKORO_VOICES[lang.split("-")[0]];
-    if (!voices) throw new Error(`Kokoro: no voice for language "${opts.lang}"`);
-    const voice = opts.voice ?? (opts.gender === "male" ? voices.male : voices.female);
+    const voices2 = KOKORO_VOICES[lang] ?? KOKORO_VOICES[lang.split("-")[0]];
+    if (!voices2) throw new Error(`Kokoro: no voice for language "${opts.lang}"`);
+    const voice = opts.voice ?? (opts.gender === "male" ? voices2.male : voices2.female);
     const ph = await this.phonemes(text, lang);
     if (ph !== null && !ph.trim()) return { samples: new Float32Array(0), sampleRate: 24e3 };
     let audio;
@@ -341,7 +341,54 @@ var SupertonicWebTTS = class {
   }
 };
 
+// ../core/src/providers.ts
+var voices = /* @__PURE__ */ new Map();
+var registerTTSProvider = (def) => void voices.set(def.id, def);
+
 // ../core/src/tts.ts
+var OpenAISpeechTTS = class {
+  constructor(cfg) {
+    this.cfg = cfg;
+  }
+  cfg;
+  id = "openai-speech";
+  async synthesize(text, opts) {
+    const format = this.cfg.format ?? "wav";
+    const res = await fetch(`${this.cfg.baseUrl.replace(/\/$/, "")}/v1/audio/speech`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...this.cfg.apiKey ? { Authorization: `Bearer ${this.cfg.apiKey}` } : {} },
+      body: JSON.stringify({ model: this.cfg.model ?? "tts-1", voice: opts.voice ?? this.cfg.voice ?? "alloy", input: text, response_format: format, speed: opts.speed })
+    });
+    if (!res.ok) throw new Error(`TTS ${res.status}: ${await res.text()}`);
+    return { data: new Uint8Array(await res.arrayBuffer()), mimeType: format === "wav" ? "audio/wav" : "audio/mpeg" };
+  }
+};
+var GeminiTTS = class {
+  constructor(cfg) {
+    this.cfg = cfg;
+  }
+  cfg;
+  id = "gemini-tts";
+  async synthesize(text, opts) {
+    const model = this.cfg.model ?? "gemini-2.5-flash-preview-tts";
+    const voice = opts.voice ?? this.cfg.voice ?? (opts.gender === "male" ? "Charon" : "Kore");
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.cfg.apiKey },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text }] }],
+        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } }
+      })
+    });
+    if (!res.ok) throw new Error(`Gemini TTS ${res.status}: ${await res.text()}`);
+    const json = await res.json();
+    const b64 = json.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData?.data;
+    if (!b64) throw new Error("Gemini TTS: no audio in response");
+    const bytes = base64ToBytes(b64);
+    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
+    return { samples: Float32Array.from(pcm, (v) => v / 32768), sampleRate: 24e3 };
+  }
+};
 function encodeWav(samples, sampleRate) {
   const buf = new ArrayBuffer(44 + samples.length * 2);
   const v = new DataView(buf);
@@ -362,6 +409,27 @@ function encodeWav(samples, sampleRate) {
   for (let i = 0; i < samples.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 32767, true);
   return new Uint8Array(buf);
 }
+function base64ToBytes(b64) {
+  if (typeof atob === "function") return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new Uint8Array(globalThis.Buffer.from(b64, "base64"));
+}
+registerTTSProvider({
+  id: "gemini-tts",
+  label: "Gemini TTS (cloud)",
+  fields: [{ key: "apiKey", label: "API key", secret: true, placeholder: "Blank = the Gemini language key" }],
+  create: (o, ctx) => new GeminiTTS({ apiKey: o.apiKey || ctx.option?.("gemini", "apiKey") || "" })
+});
+registerTTSProvider({
+  id: "openai-speech",
+  label: "OpenAI-compatible speech server (OpenAI, Kokoro-FastAPI\u2026)",
+  fields: [
+    { key: "baseUrl", label: "Speech server URL", required: true, placeholder: "http://localhost:8880" },
+    { key: "apiKey", label: "API key", secret: true },
+    { key: "model", label: "Model" },
+    { key: "voice", label: "Voice" }
+  ],
+  create: (o) => new OpenAISpeechTTS({ baseUrl: o.baseUrl, apiKey: o.apiKey || void 0, model: o.model || void 0, voice: o.voice || void 0 })
+});
 
 // src/recorder.ts
 var TARGET_RATE = 16e3;
@@ -641,7 +709,7 @@ function toVoice(frames) {
   };
 }
 
-// src/index.ts
+// src/engines.ts
 var WebSpeechTTS = class {
   id = "web-speech";
   async synthesize(text, opts) {

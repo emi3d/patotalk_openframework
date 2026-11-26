@@ -144,3 +144,19 @@ test("audio turns go to the model as audio (no transcription), stats count secon
   assert.equal(s?.totalSpeakingSeconds, 3.5);
   assert.equal(s?.totalWords, 0);
 });
+
+test("providers come from a registry: add one without touching the core", async () => {
+  const { registerLLMProvider, llmProviders, createLLM, missingFields, llmProvider, ttsProviders } = await import("../src/index.js");
+  assert.ok(llmProviders().some((p) => p.id === "gemini"));
+  assert.ok(ttsProviders().some((p) => p.id === "openai-speech"));
+  registerLLMProvider({
+    id: "my-llm",
+    label: "Mine",
+    fields: [{ key: "token", label: "Token", required: true }],
+    create: async (o) => new FakeListChatModel({ responses: [`hi ${o.token}`] }) as any,
+  });
+  assert.deepEqual(missingFields(llmProvider("my-llm"), {}), ["Token"]);
+  const m = await createLLM({ provider: "my-llm", token: "t1" });
+  assert.equal((await m.invoke("x")).content, "hi t1");
+  await assert.rejects(createLLM({ provider: "nope" }), /Unknown language provider/);
+});

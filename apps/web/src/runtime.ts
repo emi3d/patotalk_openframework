@@ -1,30 +1,27 @@
 import initSqlJs from "sql.js";
 import wasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import {
-  GeminiTTS,
-  OpenAISpeechTTS,
   PatoTalk,
   StatsStore,
   createLLM,
-  messageText,
+  llmProvider,
+  missingFields,
   parseExperience,
   sqlJsDriver,
+  ttsProvider,
   type Experience,
   type LLMConfig,
+  type ProviderOptions,
   type TTSProvider,
 } from "@patotalk/core";
-import { KokoroWebTTS, SupertonicWebTTS, WebSpeechTTS } from "@patotalk/tts-web";
-
-export type TTSChoice = "none" | "web-speech" | "supertonic" | "kokoro" | "gemini-tts" | "openai-speech";
+import "@patotalk/tts-web";
 
 export interface Settings {
   userId: string;
-  llm: "gemini" | "openai" | "ollama";
-  apiKey: string;
-  model: string;
-  baseUrl: string;
-  tts: TTSChoice;
-  ttsUrl: string;
+  llm: string;
+  tts: string;
+  llmOptions: Record<string, ProviderOptions>;
+  ttsOptions: Record<string, ProviderOptions>;
   autoplay: boolean;
   handsFree: boolean;
 }
@@ -33,63 +30,40 @@ const KEY = "patotalk.settings";
 export const defaultSettings: Settings = {
   userId: "me",
   llm: "gemini",
-  apiKey: "",
-  model: "",
-  baseUrl: "",
   tts: "supertonic",
-  ttsUrl: "http://localhost:8880",
+  llmOptions: {},
+  ttsOptions: {},
   autoplay: true,
   handsFree: true,
 };
 
 export function loadSettings(): Settings {
   try {
-    return { ...defaultSettings, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    const s: Settings = { ...defaultSettings, ...raw };
+    if (raw.apiKey || raw.model || raw.baseUrl)
+      s.llmOptions = { ...s.llmOptions, [s.llm]: { apiKey: raw.apiKey, model: raw.model, baseUrl: raw.baseUrl, ...s.llmOptions[s.llm] } };
+    if (raw.ttsUrl && !s.ttsOptions["openai-speech"]) s.ttsOptions = { ...s.ttsOptions, "openai-speech": { baseUrl: raw.ttsUrl } };
+    for (const k of ["apiKey", "model", "baseUrl", "ttsUrl"]) delete (s as unknown as Record<string, unknown>)[k];
+    return s;
   } catch {
     return defaultSettings;
   }
 }
 export const saveSettings = (s: Settings) => localStorage.setItem(KEY, JSON.stringify(s));
 
-export function llmConfig(s: Settings): LLMConfig {
-  const model = s.model || undefined;
-  if (s.llm === "gemini") return { provider: "gemini", apiKey: s.apiKey, model };
-  if (s.llm === "openai") return { provider: "openai", apiKey: s.apiKey || undefined, model, baseUrl: s.baseUrl || undefined };
-  return { provider: "ollama", model, baseUrl: s.baseUrl || undefined };
-}
+export const llmOptions = (s: Settings): ProviderOptions => s.llmOptions[s.llm] ?? {};
+export const ttsOptions = (s: Settings): ProviderOptions => s.ttsOptions[s.tts] ?? {};
+export const llmConfig = (s: Settings): LLMConfig => ({ provider: s.llm, ...llmOptions(s) });
+export const llmMissing = (s: Settings) => missingFields(llmProvider(s.llm), llmOptions(s));
 
 const ttsCache = new Map<string, TTSProvider>();
 export function ttsFor(s: Settings): TTSProvider | undefined {
-  const id = `${s.tts}|${s.ttsUrl}|${s.apiKey}`;
-  if (ttsCache.has(id)) return ttsCache.get(id);
-  let t: TTSProvider | undefined;
-  switch (s.tts) {
-    case "web-speech":
-      t = new WebSpeechTTS();
-      break;
-    case "supertonic":
-      t = new SupertonicWebTTS();
-      break;
-    case "kokoro":
-      t = new KokoroWebTTS({ device: "wasm", reader: (text) => japaneseReading(s, text) });
-      break;
-    case "gemini-tts":
-      t = new GeminiTTS({ apiKey: s.apiKey });
-      break;
-    case "openai-speech":
-      t = new OpenAISpeechTTS({ baseUrl: s.ttsUrl });
-      break;
-  }
-  if (t) ttsCache.set(id, t);
-  return t;
-}
-
-async function japaneseReading(s: Settings, text: string): Promise<string> {
-  const llm = await createLLM(llmConfig(s));
-  const r = await llm.invoke(
-    `Rewrite this Japanese text in hiragana only, exactly as it is pronounced (particle は as わ, へ as え, を as お; long vowels with ー for katakana words). Keep punctuation. Output only the reading.\n\n${text}`,
-  );
-  return messageText(r).trim();
+  const def = ttsProvider(s.tts);
+  if (!def) return undefined;
+  const id = JSON.stringify([s.tts, ttsOptions(s), s.llm, llmOptions(s)]);
+  if (!ttsCache.has(id)) ttsCache.set(id, def.create(ttsOptions(s), { llm: () => createLLM(llmConfig(s)), option: (p, k) => s.llmOptions[p]?.[k] }));
+  return ttsCache.get(id);
 }
 
 const DB_KEY = "patotalk.sqlite";

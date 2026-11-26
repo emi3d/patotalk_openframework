@@ -1,3 +1,5 @@
+import { registerTTSProvider } from "./providers.js";
+
 export interface SpeechAudio {
   samples?: Float32Array;
   sampleRate?: number;
@@ -94,3 +96,22 @@ function base64ToBytes(b64: string): Uint8Array {
   if (typeof atob === "function") return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return new Uint8Array((globalThis as any).Buffer.from(b64, "base64"));
 }
+
+registerTTSProvider({
+  id: "gemini-tts",
+  label: "Gemini TTS (cloud)",
+  fields: [{ key: "apiKey", label: "API key", secret: true, placeholder: "Blank = the Gemini language key" }],
+  create: (o, ctx) => new GeminiTTS({ apiKey: o.apiKey || ctx.option?.("gemini", "apiKey") || "" }),
+});
+
+registerTTSProvider({
+  id: "openai-speech",
+  label: "OpenAI-compatible speech server (OpenAI, Kokoro-FastAPI…)",
+  fields: [
+    { key: "baseUrl", label: "Speech server URL", required: true, placeholder: "http://localhost:8880" },
+    { key: "apiKey", label: "API key", secret: true },
+    { key: "model", label: "Model" },
+    { key: "voice", label: "Voice" },
+  ],
+  create: (o) => new OpenAISpeechTTS({ baseUrl: o.baseUrl!, apiKey: o.apiKey || undefined, model: o.model || undefined, voice: o.voice || undefined }),
+});
