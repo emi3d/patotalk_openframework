@@ -1,7 +1,7 @@
 {
   "name": "@patotalk/tts-web",
   "version": "0.1.0",
-  "description": "Browser audio for Pato Talk: mic recording for multimodal LLM input, and TTS output (Kokoro-82M, Supertonic 3, Web Speech).",
+  "description": "Browser audio for Pato Talk: mic recording for multimodal LLM input, and TTS output (Supertonic 3, Web Speech).",
   "type": "module",
   "license": "MIT",
   "main": "src/index.ts",

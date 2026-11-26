@@ -1,8 +1,6 @@
 import type { SpeakOptions, SpeechAudio, TTSProvider } from "@patotalk/core";
 
-export { KokoroWebTTS, KOKORO_VOICES, type KokoroWebOptions } from "./kokoro.js";
 export { SupertonicWebTTS, SUPERTONIC_LANGUAGES, type SupertonicWebOptions } from "./supertonic.js";
-export { kanaToKokoro, toHiragana, hasKanji } from "./ja-kana.js";
 export { cleanForSpeech, serial } from "./util.js";
 export { VoiceRecorder, type RecordedVoice } from "./recorder.js";
 export { HandsFreeMic, EnergyDetector, TenVadDetector, TEN_VAD_URL, type VoiceDetector, type HandsFreeOptions } from "./handsfree.js";

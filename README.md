@@ -31,7 +31,7 @@ npm run selftest -- --voice               # the simulated learner speaks; the mo
 - **Your voice in**: the app records a 16 kHz WAV and sends it as a LangChain audio block. No speech recognition anywhere. In hands-free mode a tiny voice detector ([TEN VAD](https://github.com/TEN-framework/ten-vad), about 280 KB of WASM using under 1% of a CPU core) decides when you start and stop. The core also accepts an `interrupted: { heard }` flag on a voice turn, for apps whose voice is fast enough to allow talking over the character. It is loaded at runtime from TEN's repository and its license has extra conditions from Agora, so check it before shipping a product. Swap it for any `VoiceDetector`; a loudness detector is the built-in fallback.
 - **Loop**: a small LangGraph graph. Each message is one turn, and the scene is evaluated when you end it or run out of turns.
 - **Providers are plugins**: `registerLLMProvider()` and `registerTTSProvider()` add a provider with its settings fields; the app lists whatever is registered.
-- **Voice out**: Supertonic 3 by default, running in the browser. Kokoro, the browser's own voices, Gemini TTS, or any `/v1/audio/speech` server also work.
+- **Voice out**: Supertonic 3 by default, running in the browser. The browser's own voices, Gemini TTS, or any `/v1/audio/speech` server also work.
 - **Evaluation**: the evaluator hears your recordings too, so it can comment on pronunciation and fluency.
 - **Stats**: SQLite (in the browser, in Node, or with expo-sqlite) or Postgres. Only scores, counts and seconds spoken are saved, never the conversation or the audio.
 
@@ -56,10 +56,7 @@ Use **Create** in the app, or write the JSON by hand. An experience has four par
 
 ## Voices
 
-I tested both models in the browser on Windows:
-
-- **Supertonic 3** handles Japanese well and reads kanji directly. The first load downloads about 400 MB, which takes around 25 s. After that it speaks 4 to 10 times faster than real time.
-- **Kokoro-82M** also handles Japanese well, but it needs kana and only works on WASM, because WebGPU distorts its audio. It runs at about real-time speed.
+Supertonic 3 runs in the browser and handles Japanese well, kanji included. The first load downloads about 400 MB (around 25 s); after that it speaks 4 to 10 times faster than real time.
 
 ## Layout
 

@@ -106,7 +106,7 @@ registerTTSProvider({
 
 registerTTSProvider({
   id: "openai-speech",
-  label: "OpenAI-compatible speech server (OpenAI, Kokoro-FastAPI…)",
+  label: "OpenAI-compatible speech server (OpenAI or any /v1/audio/speech server)",
   fields: [
     { key: "baseUrl", label: "Speech server URL", required: true, placeholder: "http://localhost:8880" },
     { key: "apiKey", label: "API key", secret: true },

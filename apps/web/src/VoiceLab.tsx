@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { encodeWav, type TTSProvider } from "@patotalk/core";
-import { AudioPlayer, KokoroWebTTS, SupertonicWebTTS } from "@patotalk/tts-web";
+import { AudioPlayer, SupertonicWebTTS } from "@patotalk/tts-web";
 
 const SAMPLES = [
-  { lang: "ja", text: "味噌ラーメンが一番おいしいですよ。大盛りにしますか？", kana: "みそらーめんが いちばん おいしいですよ。おおもりに しますか？" },
+  { lang: "ja", text: "味噌ラーメンが一番おいしいですよ。大盛りにしますか？" },
   { lang: "fr", text: "Bonjour madame ! Je voudrais une baguette et deux croissants, s'il vous plaît." },
   { lang: "en", text: "Tell me exact numbers, like sales or money saved." },
 ];
@@ -20,14 +20,12 @@ export function VoiceLab() {
   const engines = useMemo<Record<string, TTSProvider>>(
     () => ({
       "Supertonic 3": new SupertonicWebTTS(),
-      "Kokoro (WASM)": new KokoroWebTTS({ device: "wasm" }),
-      "Kokoro (WebGPU)": new KokoroWebTTS({ device: "webgpu" }),
     }),
     [],
   );
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState("");
-  const [text, setText] = useState(SAMPLES[0].kana!);
+  const [text, setText] = useState(SAMPLES[0].text);
   const [lang, setLang] = useState("ja");
   const player = useMemo(() => new AudioPlayer(), []);
   useEffect(() => () => player.close(), [player]);
@@ -54,8 +52,7 @@ export function VoiceLab() {
     <section className="form wide">
       <h2>Voice lab</h2>
       <p className="muted">
-        Runs the voice models inside this browser. The first run downloads the model (Supertonic about 400 MB, Kokoro about 90–330 MB) and caches it. For
-        Japanese, Kokoro needs kana; Supertonic reads kanji directly.
+        Runs the voice models inside this browser. The first run downloads the model (about 400 MB) and caches it.
       </p>
       <div className="row">
         {SAMPLES.map((s) => (
@@ -63,7 +60,7 @@ export function VoiceLab() {
             key={s.lang}
             onClick={() => {
               setLang(s.lang);
-              setText(s.kana ?? s.text);
+              setText(s.text);
             }}
           >
             Sample {s.lang}

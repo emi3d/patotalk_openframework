@@ -44,6 +44,7 @@ export function loadSettings(): Settings {
     if (raw.apiKey || raw.model || raw.baseUrl)
       s.llmOptions = { ...s.llmOptions, [s.llm]: { apiKey: raw.apiKey, model: raw.model, baseUrl: raw.baseUrl, ...s.llmOptions[s.llm] } };
     if (raw.ttsUrl && !s.ttsOptions["openai-speech"]) s.ttsOptions = { ...s.ttsOptions, "openai-speech": { baseUrl: raw.ttsUrl } };
+    if (s.tts !== "none" && !ttsProvider(s.tts)) s.tts = defaultSettings.tts;
     for (const k of ["apiKey", "model", "baseUrl", "ttsUrl"]) delete (s as unknown as Record<string, unknown>)[k];
     return s;
   } catch {
